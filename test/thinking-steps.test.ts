@@ -828,6 +828,72 @@ describe("integration patch", () => {
 			await release();
 		}
 	});
+
+	it("preserves host markdown transformers when Pi exposes them and falls back cleanly on older Pi", async () => {
+		const release = await retainThinkingStepsPatch();
+		try {
+			const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+				importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[] } }>(
+					PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
+				),
+				importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
+					PI_CODING_AGENT_INTERNAL_MODULES.theme,
+				),
+			]);
+			initTheme("dark", true);
+
+			// Pi >= 0.84 ships markdown transformers (mermaid/LaTeX). On the pinned
+			// Pi version the module does not exist and the patch must keep rendering
+			// through its legacy Markdown construction without failing.
+			let markdownTransformAvailable = false;
+			try {
+				await importPiCodingAgentInternal<{ createMarkdownTransform: unknown }>(
+					PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform,
+				);
+				markdownTransformAvailable = true;
+			} catch {
+				markdownTransformAvailable = false;
+			}
+
+			const message = {
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 123,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				content: [
+					{
+						type: "text",
+						text: "Final answer.\n\n```mermaid\nflowchart TD\n    A --> B\n```",
+					},
+				] as const,
+			};
+
+			setThinkingStepsMode("summary");
+			clearActiveThinkingState();
+			const component = new AssistantMessageComponent(message, false);
+			const lines = component.render(120).map(stripAnsi);
+			assert.ok(lines.some((line) => line.includes("Final answer.")));
+			if (markdownTransformAvailable) {
+				assert.ok(!lines.some((line) => line.includes("flowchart TD")));
+			} else {
+				assert.ok(lines.some((line) => line.includes("flowchart TD")));
+			}
+		} finally {
+			clearActiveThinkingState();
+			setThinkingStepsMode("summary");
+			await release();
+		}
+	});
 });
 
 describe("parseThinkingMode", () => {
