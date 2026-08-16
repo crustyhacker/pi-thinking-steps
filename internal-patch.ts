@@ -9,7 +9,36 @@ import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
 export const PI_CODING_AGENT_INTERNAL_MODULES = {
 	assistantMessageComponent: "dist/modes/interactive/components/assistant-message.js",
 	theme: "dist/modes/interactive/theme/theme.js",
+	markdownTransform: "dist/modes/interactive/components/markdown-transform.js",
 } as const;
+
+/** Render state owned by the host AssistantMessageComponent (pi >= 0.84). */
+interface HostRenderState {
+	isStreaming?: boolean;
+	outputPad?: number;
+	markdownTransformers?: unknown[];
+}
+
+/** Creates the markdown transform pi applies to assistant/user messages (mermaid, LaTeX, ...). */
+type CreateMarkdownTransform = (
+	messageType: string,
+	isStreaming: boolean,
+	transformers: unknown[],
+) => (markdown: string, context: unknown) => string;
+
+/**
+ * Markdown in Pi >= 0.84 accepts an options bag with a `transform` hook (markdown
+ * transformers, e.g. mermaid/LaTeX). The pinned Pi typings only declare the legacy
+ * 4-5 argument constructor, so widen it at this single call site.
+ */
+const MarkdownWithTransform = Markdown as unknown as new (
+	text: string,
+	paddingX: number,
+	paddingY: number,
+	theme: unknown,
+	defaultTextStyle: unknown,
+	options?: { transform?: (markdown: string, context: unknown) => string },
+) => InstanceType<typeof Markdown>;
 
 interface AssistantMessageComponentPrototype {
 	updateContent(message: AssistantMessage): void;
@@ -156,6 +185,20 @@ async function installPatch(): Promise<() => void> {
 		),
 	]);
 
+	// Pi >= 0.84 ships markdown transformers (mermaid/LaTeX rendering). Load the
+	// factory best-effort so the patch keeps working on older pi versions.
+	let createMarkdownTransform: CreateMarkdownTransform | null = null;
+	try {
+		const { createMarkdownTransform: factory } = await importPiCodingAgentInternal<{ createMarkdownTransform: unknown }>(
+			PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform,
+		);
+		if (typeof factory === "function") {
+			createMarkdownTransform = factory as CreateMarkdownTransform;
+		}
+	} catch {
+		createMarkdownTransform = null;
+	}
+
 	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(rawAssistantMessageComponent);
 	const theme = assertThinkingStepsTheme(rawTheme);
 	const prototype = AssistantMessageComponent.prototype;
@@ -280,8 +323,16 @@ async function installPatch(): Promise<() => void> {
 		}
 	};
 
-	const patchedUpdateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
+	const patchedUpdateContent = function patchedUpdateContent(
+		this: AssistantMessageComponentPrototype,
+		message: AssistantMessage,
+		isStreaming?: boolean,
+	): void {
 		this.lastMessage = message;
+		const host = this as unknown as HostRenderState;
+		if (isStreaming !== undefined) {
+			host.isStreaming = isStreaming;
+		}
 		if (!hasPatchableContentContainer(this)) {
 			fallbackToOriginalUpdateContent(this, message, "updateContent");
 			return;
@@ -305,7 +356,26 @@ async function installPatch(): Promise<() => void> {
 
 			for (const content of message.content) {
 				if (content.type === "text" && content.text.trim()) {
-					this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme as any));
+					// Preserve pi's markdown transformers (mermaid/LaTeX rendering) the same
+					// way the native AssistantMessageComponent.updateContent does.
+					this.contentContainer.addChild(
+						new MarkdownWithTransform(
+							content.text.trim(),
+							host.outputPad ?? 1,
+							0,
+							this.markdownTheme as any,
+							undefined,
+							createMarkdownTransform
+								? {
+										transform: createMarkdownTransform(
+											"assistant",
+											host.isStreaming ?? false,
+											host.markdownTransformers ?? [],
+										),
+									}
+								: undefined,
+						),
+					);
 					continue;
 				}
 

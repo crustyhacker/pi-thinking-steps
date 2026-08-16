@@ -188,6 +188,8 @@ Today, the patch relies on these internal modules in `@mariozechner/pi-coding-ag
 - `dist/modes/interactive/components/assistant-message.js`
 - `dist/modes/interactive/theme/theme.js`
 
+When available (Pi >= 0.84), it additionally loads `dist/modes/interactive/components/markdown-transform.js` on a best-effort basis so assistant text keeps Pi's markdown transformers (mermaid/LaTeX rendering). On the pinned Pi version that module does not exist and the patch falls back to its legacy Markdown construction, which is not treated as a patch failure.
+
 That means:
 
 - upstream Pi internal changes can break the patch layer
