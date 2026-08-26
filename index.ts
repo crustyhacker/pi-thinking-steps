@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
-import { Key } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { Key } from "@earendil-works/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
@@ -286,7 +286,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
 		try {
-			registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
+			registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch(ctx.ui.theme));
 			markSessionDegraded(activeScopeKey, false);
 		} catch (error) {
 			markSessionDegraded(activeScopeKey, true);

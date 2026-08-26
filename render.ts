@@ -1,5 +1,5 @@
-import type { Component } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { deriveThinkingSteps } from "./parse.js";
 import { getActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode } from "./state.js";
 import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";

@@ -1,15 +1,9 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import type { AssistantMessage, ThinkingContent } from "@mariozechner/pi-ai";
-import { Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import type { AssistantMessage, ThinkingContent } from "@earendil-works/pi-ai";
+import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
+import { Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, resolveThinkingMessageScope, setPatchCleanup, setPatchInstallPromise } from "./state.js";
 import { ThinkingStepsComponent } from "./render.js";
 import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
-
-export const PI_CODING_AGENT_INTERNAL_MODULES = {
-	assistantMessageComponent: "dist/modes/interactive/components/assistant-message.js",
-	theme: "dist/modes/interactive/theme/theme.js",
-} as const;
 
 interface AssistantMessageComponentPrototype {
 	updateContent(message: AssistantMessage): void;
@@ -84,42 +78,6 @@ function fallbackToOriginalUpdateContent(
 	}
 }
 
-function getPackageRoot(packageName: string): string {
-	let entryUrl: string;
-	try {
-		entryUrl = import.meta.resolve(packageName);
-	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not resolve ${packageName} package root. Pi internals may be unavailable or moved.`, {
-			cause: error,
-		});
-	}
-
-	try {
-		const entryPath = fileURLToPath(entryUrl);
-		return dirname(dirname(entryPath));
-	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not derive ${packageName} package root from ${entryUrl}.`, {
-			cause: error,
-		});
-	}
-}
-
-export function resolvePiCodingAgentInternalModuleUrl(relativePath: string): string {
-	const packageRoot = getPackageRoot("@mariozechner/pi-coding-agent");
-	return pathToFileURL(join(packageRoot, relativePath)).href;
-}
-
-export async function importPiCodingAgentInternal<TModule>(relativePath: string): Promise<TModule> {
-	const moduleUrl = resolvePiCodingAgentInternalModuleUrl(relativePath);
-	try {
-		return (await import(moduleUrl)) as TModule;
-	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not import internal module "@mariozechner/pi-coding-agent/${relativePath}". Pi internals may have moved.`, {
-			cause: error,
-		});
-	}
-}
-
 function hasVisibleThinking(content: ThinkingContent): boolean {
 	return content.redacted === true || content.thinking.trim().length > 0;
 }
@@ -146,19 +104,10 @@ function hasVisibleThinkingContent(message: AssistantMessage): boolean {
 	return message.content.some((content) => content.type === "thinking" && hasVisibleThinking(content));
 }
 
-async function installPatch(): Promise<() => void> {
-	const [{ AssistantMessageComponent: rawAssistantMessageComponent }, { theme: rawTheme }] = await Promise.all([
-		importPiCodingAgentInternal<{ AssistantMessageComponent: unknown }>(
-			PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-		),
-		importPiCodingAgentInternal<{ theme: unknown }>(
-			PI_CODING_AGENT_INTERNAL_MODULES.theme,
-		),
-	]);
-
-	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(rawAssistantMessageComponent);
-	const theme = assertThinkingStepsTheme(rawTheme);
-	const prototype = AssistantMessageComponent.prototype;
+async function installPatch(theme: ThinkingThemeLike): Promise<() => void> {
+	const AssistantMessageComponentCtor = assertPatchableAssistantMessageComponent(AssistantMessageComponent);
+	assertThinkingStepsTheme(theme);
+	const prototype = AssistantMessageComponentCtor.prototype;
 	const originalUpdateContent = prototype.updateContent;
 	const originalSetHideThinkingBlock = prototype.setHideThinkingBlock;
 	const originalSetHiddenThinkingLabel = prototype.setHiddenThinkingLabel;
@@ -393,12 +342,12 @@ async function installPatch(): Promise<() => void> {
 	};
 }
 
-export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
+export async function retainThinkingStepsPatch(theme: ThinkingThemeLike): Promise<() => Promise<void>> {
 	incrementPatchRefCount();
 	let cleanup = getPatchCleanup();
 	if (!cleanup) {
 		const existingInstallPromise = getPatchInstallPromise();
-		const installPromise = existingInstallPromise ?? installPatch();
+		const installPromise = existingInstallPromise ?? installPatch(theme);
 		if (!existingInstallPromise) {
 			setPatchInstallPromise(installPromise);
 		}

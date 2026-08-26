@@ -7,9 +7,6 @@ import { deriveThinkingSteps, iconForThinkingRole, inferThinkingRole, parseThink
 import {
 	assertPatchableAssistantMessageComponent,
 	assertThinkingStepsTheme,
-	importPiCodingAgentInternal,
-	PI_CODING_AGENT_INTERNAL_MODULES,
-	resolvePiCodingAgentInternalModuleUrl,
 	retainThinkingStepsPatch,
 } from "../internal-patch.js";
 import { ThinkingStepsComponent, renderThinkingStepsLines } from "../render.js";
@@ -28,8 +25,10 @@ import {
 	setThinkingStepsMode,
 } from "../state.js";
 import type { ThinkingThemeLike } from "../types.js";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import thinkingStepsExtension from "../index.js";
-import { Key } from "@mariozechner/pi-tui";
+import { AssistantMessageComponent, initTheme } from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
 
 function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -300,26 +299,19 @@ describe("patch guards", () => {
 		);
 	});
 
-	it("exports the pinned Pi internal module paths used by the patch", () => {
-		assert.equal(
-			PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			"dist/modes/interactive/components/assistant-message.js",
-		);
-		assert.equal(
-			PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			"dist/modes/interactive/theme/theme.js",
-		);
-		assert.match(
-			resolvePiCodingAgentInternalModuleUrl(PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent),
-			/assistant-message\.js$/,
-		);
+	it("patches the host public AssistantMessageComponent export instead of private internal modules", () => {
+		assert.doesNotThrow(() => assertPatchableAssistantMessageComponent(AssistantMessageComponent));
+		assert.equal(typeof AssistantMessageComponent.prototype.updateContent, "function");
+		assert.equal(typeof AssistantMessageComponent.prototype.setHideThinkingBlock, "function");
+		assert.equal(typeof AssistantMessageComponent.prototype.setHiddenThinkingLabel, "function");
 	});
 
-	it("reports a specific compatibility error when an internal module cannot be imported", async () => {
-		await assert.rejects(
-			() => importPiCodingAgentInternal("dist/modes/interactive/missing.js"),
-			/could not import internal module "@mariozechner\/pi-coding-agent\/dist\/modes\/interactive\/missing\.js"/,
-		);
+	it("does not resolve private internal module paths from the coding agent package", async () => {
+		const source = await readFile("internal-patch.ts", "utf8");
+		assert.ok(!source.includes("import.meta.resolve"));
+		assert.ok(!source.includes("@mariozechner"));
+		assert.ok(!source.includes("dist/modes/interactive"));
+		assert.ok(source.includes("@earendil-works/pi-coding-agent"));
 	});
 });
 
@@ -769,16 +761,8 @@ describe("renderThinkingStepsLines", () => {
 
 describe("integration patch", () => {
 	it("patches AssistantMessageComponent so mode switching changes live thinking rendering", async () => {
-		const release = await retainThinkingStepsPatch();
+		const release = await retainThinkingStepsPatch(createPlainTheme());
 		try {
-			const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-				importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
-					PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-				),
-				importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-					PI_CODING_AGENT_INTERNAL_MODULES.theme,
-				),
-			]);
 			initTheme("dark", true);
 
 			const message = {
@@ -808,7 +792,7 @@ describe("integration patch", () => {
 
 			setThinkingStepsMode("summary");
 			clearActiveThinkingState();
-			const component = new AssistantMessageComponent(message, false);
+			const component = new AssistantMessageComponent(message as unknown as AssistantMessage, false);
 			let lines = component.render(100).map(stripAnsi);
 			assert.ok(lines.some((line) => line.includes("Thinking Steps · Summary")));
 			assert.equal(lines.filter((line) => line.startsWith("├─") || line.startsWith("└─")).length, 3);
@@ -936,14 +920,6 @@ describe("thinkingStepsExtension", () => {
 		assert.ok(command);
 		assert.ok(shortcut);
 
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
 		initTheme("dark", true);
 
 		try {
@@ -969,7 +945,7 @@ describe("thinkingStepsExtension", () => {
 				],
 			} as const;
 
-			const component = new AssistantMessageComponent(message, false);
+			const component = new AssistantMessageComponent(message as unknown as AssistantMessage, false);
 			ctx.ui.hiddenThinkingLabelEffects.push((label) => component.setHiddenThinkingLabel(label));
 
 			let lines = component.render(100).map(stripAnsi);
@@ -1270,14 +1246,6 @@ describe("thinkingStepsExtension persistence", () => {
 	});
 });
 	async function loadAssistantMessageComponent() {
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
 		initTheme("dark", true);
 		return AssistantMessageComponent;
 	}
@@ -1300,7 +1268,7 @@ describe("thinkingStepsExtension persistence", () => {
 			assert.equal(getPatchCleanup(), undefined);
 			assert.equal(getPatchInstallPromise(), undefined);
 
-			[releaseA, releaseB] = await Promise.all([retainThinkingStepsPatch(), retainThinkingStepsPatch()]);
+			[releaseA, releaseB] = await Promise.all([retainThinkingStepsPatch(createPlainTheme()), retainThinkingStepsPatch(createPlainTheme())]);
 
 			assert.equal(getPatchRefCount(), 2);
 			assert.ok(getPatchCleanup());
@@ -1347,7 +1315,7 @@ describe("thinkingStepsExtension persistence", () => {
 		assert.equal(getPatchCleanup(), undefined);
 		setPatchInstallPromise(rejectedInstall);
 
-		await assert.rejects(() => retainThinkingStepsPatch(), /install failed/);
+		await assert.rejects(() => retainThinkingStepsPatch(createPlainTheme()), /install failed/);
 		assert.equal(getPatchRefCount(), 0);
 		assert.equal(getPatchCleanup(), undefined);
 		assert.equal(getPatchInstallPromise(), undefined);
@@ -1356,17 +1324,9 @@ describe("thinkingStepsExtension persistence", () => {
 
 describe("integration patch edge cases", () => {
 	async function createPatchedComponent(message: unknown) {
-		const release = await retainThinkingStepsPatch();
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
+		const release = await retainThinkingStepsPatch(createPlainTheme());
 		initTheme("dark", true);
-		const component = new AssistantMessageComponent(message, false);
+		const component = new AssistantMessageComponent(message as AssistantMessage, false);
 		return { component, release };
 	}
 
@@ -1487,7 +1447,7 @@ describe("integration patch edge cases", () => {
 			assert.ok(lines.includes("Final answer."));
 
 			component.setHideThinkingBlock(true);
-			assert.equal((component as { hideThinkingBlock?: boolean }).hideThinkingBlock, false);
+			assert.equal((component as unknown as { hideThinkingBlock?: boolean }).hideThinkingBlock, false);
 			component.setHiddenThinkingLabel("rerender");
 			lines = component.render(100).map(stripAnsi).join("\n");
 			assert.ok(lines.includes("Inspect the current renderer implementation."));
@@ -1943,14 +1903,6 @@ describe("state ownership", () => {
 
 describe("patch lifecycle regression coverage", () => {
 	async function loadAssistantMessageComponentForPatchLifecycle() {
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
 		initTheme("dark", true);
 		return AssistantMessageComponent;
 	}
@@ -1973,7 +1925,7 @@ describe("patch lifecycle regression coverage", () => {
 		});
 
 		try {
-			await assert.rejects(() => retainThinkingStepsPatch(), /prototype is incompatible with thinking-steps patching|read only|Cannot assign/);
+			await assert.rejects(() => retainThinkingStepsPatch(createPlainTheme()), /prototype is incompatible with thinking-steps patching|read only|Cannot assign/);
 			assert.equal(getPatchRefCount(), 0);
 			assert.equal(getPatchCleanup(), undefined);
 			assert.equal(getPatchInstallPromise(), undefined);
@@ -1989,7 +1941,7 @@ describe("patch lifecycle regression coverage", () => {
 	});
 
 	it("keeps the final cleanup retryable if release cleanup throws", async () => {
-		const release = await retainThinkingStepsPatch();
+		const release = await retainThinkingStepsPatch(createPlainTheme());
 		const installedCleanup = getPatchCleanup();
 		assert.ok(installedCleanup);
 
@@ -2255,17 +2207,9 @@ describe("thinkingStepsExtension failure paths", () => {
 
 describe("integration patch fallback paths", () => {
 	async function createFallbackPatchedComponent(message: unknown) {
-		const release = await retainThinkingStepsPatch();
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[]; setHiddenThinkingLabel(label: string): void; setHideThinkingBlock(hide: boolean): void; hideThinkingBlock?: boolean; hiddenThinkingLabel?: string; contentContainer?: unknown } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
+		const release = await retainThinkingStepsPatch(createPlainTheme());
 		initTheme("dark", true);
-		const component = new AssistantMessageComponent(message, false);
+		const component = new AssistantMessageComponent(message as AssistantMessage, false);
 		return { component, release };
 	}
 
@@ -2294,7 +2238,7 @@ describe("integration patch fallback paths", () => {
 		} as const;
 
 		const { component, release } = await createFallbackPatchedComponent(message);
-		const container = (component as { contentContainer: { addChild(child: unknown): void } }).contentContainer;
+		const container = (component as unknown as { contentContainer: { addChild(child: unknown): void } }).contentContainer;
 		const originalAddChild = container.addChild.bind(container);
 		container.addChild = ((child: unknown) => {
 			if ((child as { constructor?: { name?: string } }).constructor?.name === "ThinkingStepsComponent") {
@@ -2364,8 +2308,8 @@ describe("integration patch fallback paths", () => {
 			component.setHideThinkingBlock(true);
 			component.setHiddenThinkingLabel("fallback");
 			const lines = component.render(100).map(stripAnsi).join("\n");
-			assert.equal((component as { hideThinkingBlock?: boolean }).hideThinkingBlock, true);
-			assert.equal((component as { hiddenThinkingLabel?: string }).hiddenThinkingLabel, "fallback");
+			assert.equal((component as unknown as { hideThinkingBlock?: boolean }).hideThinkingBlock, true);
+			assert.equal((component as unknown as { hiddenThinkingLabel?: string }).hiddenThinkingLabel, "fallback");
 			assert.ok(lines.includes("fallback"));
 			assert.ok(!lines.includes("Thinking Steps ·"));
 		} finally {
@@ -2575,14 +2519,6 @@ describe("scope-aware runtime state", () => {
 		const sessionShutdownA = getSingleHandler(piA, "session_shutdown");
 		const sessionShutdownB = getSingleHandler(piB, "session_shutdown");
 		const messageUpdateA = getSingleHandler(piA, "message_update");
-		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
-			importPiCodingAgentInternal<{ AssistantMessageComponent: new (message?: unknown, hideThinkingBlock?: boolean) => { render(width: number): string[] } }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-			),
-			importPiCodingAgentInternal<{ initTheme: (name?: string, quiet?: boolean) => void }>(
-				PI_CODING_AGENT_INTERNAL_MODULES.theme,
-			),
-		]);
 		initTheme("dark", true);
 
 		let startedA = false;
@@ -2618,7 +2554,7 @@ describe("scope-aware runtime state", () => {
 				assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
 			});
 			setCurrentThinkingScopeKey(scopeB);
-			const component = new AssistantMessageComponent(message, false);
+			const component = new AssistantMessageComponent(message as unknown as AssistantMessage, false);
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			assert.match(rendered, /Thinking/);
@@ -2900,12 +2836,13 @@ describe("repo metadata contracts", () => {
 			pi?: { extensions?: string[] };
 			scripts: Record<string, string>;
 			license: string;
-			dependencies: Record<string, string>;
+			dependencies?: Record<string, string>;
+			peerDependencies?: Record<string, string>;
 			devDependencies: Record<string, string>;
 		};
 		const packageLock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
 			version: string;
-			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>;
+			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; peerDependencies?: Record<string, string>; devDependencies?: Record<string, string> }>;
 		};
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
@@ -2927,14 +2864,16 @@ describe("repo metadata contracts", () => {
 		assert.match(packageJson.scripts.test, /node --import tsx test\/summarizer-challenger\.test\.ts/);
 		assert.ok(packageJson.scripts.test.indexOf("test/thinking-steps.test.ts") < packageJson.scripts.test.indexOf("test/summarizer-challenger.test.ts"));
 		assert.equal(packageJson.license, "MIT");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-ai"], "0.69.0");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-coding-agent"], "0.69.0");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-tui"], "0.69.0");
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], undefined);
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], undefined);
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], undefined);
+		assert.equal(packageJson.dependencies, undefined);
+		assert.equal(packageJson.peerDependencies?.["@earendil-works/pi-ai"], "*");
+		assert.equal(packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"], "*");
+		assert.equal(packageJson.peerDependencies?.["@earendil-works/pi-tui"], "*");
+		assert.equal(packageJson.devDependencies["@earendil-works/pi-ai"], "0.84.3");
+		assert.equal(packageJson.devDependencies["@earendil-works/pi-coding-agent"], "0.84.3");
+		assert.equal(packageJson.devDependencies["@earendil-works/pi-tui"], "0.84.3");
 		assert.deepEqual(packageLock.packages?.[""]?.dependencies, packageJson.dependencies);
-		assert.ok(!Object.values(packageJson.dependencies).includes("latest"));
+		assert.deepEqual(packageLock.packages?.[""]?.peerDependencies, packageJson.peerDependencies);
+		assert.ok(!Object.values(packageJson.peerDependencies ?? {}).includes("latest"));
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
 
 		const license = await readFile("LICENSE", "utf8");

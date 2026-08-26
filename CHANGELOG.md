@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Repointed the runtime patch at the host's public `AssistantMessageComponent` export from `@earendil-works/pi-coding-agent` and pass the active theme through `ctx.ui.theme`, removing the `import.meta.resolve`-based private internal module imports that patched the wrong object against the bundled `@earendil-works` `0.84.3` host.
+
+### Changed
+
+- Declared `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `@earendil-works/pi-tui` as `peerDependencies` with a `"*"` range and pinned `0.84.3` as dev dependencies for local verification.
+- The runtime patch now requires Pi (and `@earendil-works/pi-coding-agent`) `>= 0.84.3`. The bare-specifier core imports rely on Pi's `ResourceLoader` virtual module mapping, so the patch targets the host's public `AssistantMessageComponent` constructor instance instead of a separately resolved internal path.
+
 ## 1.0.11 - 2026-05-12
 
 ### Fixed

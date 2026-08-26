@@ -183,16 +183,30 @@ That patch layer is:
 
 This extension intentionally depends on Pi's current internal TUI implementation.
 
-Today, the patch relies on these internal modules in `@mariozechner/pi-coding-agent`:
+Today, the patch imports the host's public `AssistantMessageComponent` export from
+`@earendil-works/pi-coding-agent` and receives the active theme through
+`ctx.ui.theme` at `session_start`. It no longer resolves private internal module
+paths such as `dist/modes/interactive/...`.
 
-- `dist/modes/interactive/components/assistant-message.js`
-- `dist/modes/interactive/theme/theme.js`
+This requires Pi (and `@earendil-works/pi-coding-agent`) version `>= 0.84.3`, the
+first release whose public entry exports `AssistantMessageComponent`. The core
+imports rely on Pi's `ResourceLoader` virtual module mapping: Pi exposes the
+bundled `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and
+`@earendil-works/pi-tui` packages to extensions as host-provided modules, so the
+bare-specifier `AssistantMessageComponent` import resolves to the same
+constructor instance the host's TUI renders with, rather than a separately
+resolved internal copy.
 
 That means:
 
-- upstream Pi internal changes can break the patch layer
+- upstream Pi internal changes can break the patch layer if the public component
+  seam or its prototype contract drifts
 - Pi upgrades should be treated as deliberate compatibility work
-- the pinned Pi package versions and `package-lock.json` matter
+- `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and
+  `@earendil-works/pi-tui` are declared as `peerDependencies` with `"*"` and are
+  provided by the Pi host at runtime
+- `package-lock.json` records the exact `0.84.3` dev dependencies used for local
+  verification
 - `npm test` is part of the maintenance contract, not an optional extra
 - if patch install fails during `session_start`, the current session stays on Pi's native thinking renderer and live mode switching is disabled for that degraded session
 - project/global default saves and clears remain available during a degraded session, but they apply only to future compatible sessions
@@ -200,7 +214,11 @@ That means:
 - assistant message ownership is recorded from lifecycle events so patched rendering can keep a message on its original scope even if another scope becomes current later
 - one registered extension instance still has a single active lifecycle scope for session-level events; Pi should not interleave new unowned sessions through one handler set without a new `session_start`/message ownership path
 
-The current package uses Pi package version `0.69.0` as runtime dependencies in `package.json`, and compatibility-sensitive upgrades must update `package-lock.json` in the same change.
+The current package declares the Pi core packages as `peerDependencies` with a
+`"*"` range and uses `0.84.3` as dev dependencies for local verification. The
+runtime patch requires Pi (and `@earendil-works/pi-coding-agent`) `>= 0.84.3`;
+compatibility-sensitive upgrades must update `package-lock.json` in the same
+change.
 
 ---
 
