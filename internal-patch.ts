@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AssistantMessage, ThinkingContent } from "@earendil-works/pi-ai";
-import { getPackageDir, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent as HostAssistantMessageComponent, getPackageDir, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { Markdown, Spacer, Text, type Component, type MarkdownOptions, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, resolveThinkingMessageScope, setPatchCleanup, setPatchInstallPromise } from "./state.js";
 import { ThinkingStepsComponent } from "./render.js";
@@ -135,20 +135,17 @@ function hasVisibleThinkingContent(message: AssistantMessage): boolean {
 	return message.content.some((content) => content.type === "thinking" && hasVisibleThinking(content));
 }
 
-async function installPatch(): Promise<() => void> {
-	const [{ AssistantMessageComponent: rawAssistantMessageComponent }, { theme: rawTheme }, { createMarkdownTransform }] = await Promise.all([
-		importPiCodingAgentInternal<{ AssistantMessageComponent: unknown }>(
-			PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
-		),
-		importPiCodingAgentInternal<{ theme: unknown }>(
-			PI_CODING_AGENT_INTERNAL_MODULES.theme,
-		),
+async function installPatch(providedTheme?: ThinkingThemeLike): Promise<() => void> {
+	const [{ theme: rawTheme }, { createMarkdownTransform }] = await Promise.all([
+		providedTheme === undefined
+			? importPiCodingAgentInternal<{ theme: unknown }>(PI_CODING_AGENT_INTERNAL_MODULES.theme)
+			: Promise.resolve({ theme: providedTheme }),
 		importPiCodingAgentInternal<{
 			createMarkdownTransform(messageType: "assistant", isStreaming: boolean, transformers: MarkdownTransformer[]): NonNullable<MarkdownOptions["transform"]>;
 		}>(PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform),
 	]);
 
-	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(rawAssistantMessageComponent);
+	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(HostAssistantMessageComponent);
 	const theme = assertThinkingStepsTheme(rawTheme);
 	const prototype = AssistantMessageComponent.prototype;
 	const originalUpdateContent = prototype.updateContent;
@@ -396,12 +393,12 @@ async function installPatch(): Promise<() => void> {
 	};
 }
 
-export async function retainThinkingStepsPatch(): Promise<() => Promise<void>> {
+export async function retainThinkingStepsPatch(theme?: ThinkingThemeLike): Promise<() => Promise<void>> {
 	incrementPatchRefCount();
 	let cleanup = getPatchCleanup();
 	if (!cleanup) {
 		const existingInstallPromise = getPatchInstallPromise();
-		const installPromise = existingInstallPromise ?? installPatch();
+		const installPromise = existingInstallPromise ?? installPatch(theme);
 		if (!existingInstallPromise) {
 			setPatchInstallPromise(installPromise);
 		}

@@ -30,7 +30,7 @@ import {
 import type { ThinkingThemeLike } from "../types.js";
 import thinkingStepsExtension from "../index.js";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { getPackageDir, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
+import { AssistantMessageComponent as HostAssistantMessageComponent, getPackageDir, initTheme, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { Key, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { pathToFileURL } from "node:url";
 
@@ -325,6 +325,56 @@ describe("patch guards", () => {
 			() => importPiCodingAgentInternal("dist/modes/interactive/missing.js"),
 			/could not import internal module "@earendil-works\/pi-coding-agent\/dist\/modes\/interactive\/missing\.js"/,
 		);
+	});
+
+	it("patches the public host renderer with its UI theme without deep renderer or theme modules", async () => {
+		const root = await mkdtemp(join(tmpdir(), "thinking-steps-host-"));
+		const previousPackageDir = process.env.PI_PACKAGE_DIR;
+		const markdownTransformUrl = resolvePiCodingAgentInternalModuleUrl(PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform);
+		const baselineRefCount = getPatchRefCount();
+		const originalMethods = [
+			HostAssistantMessageComponent.prototype.updateContent,
+			HostAssistantMessageComponent.prototype.setHideThinkingBlock,
+			HostAssistantMessageComponent.prototype.setHiddenThinkingLabel,
+		];
+		let release: (() => Promise<void>) | undefined;
+		let themeCalls = 0;
+		try {
+			await mkdir(join(root, "dist/modes/interactive/components"), { recursive: true });
+			await writeFile(join(root, "package.json"), JSON.stringify({ type: "module" }));
+			await writeFile(join(root, PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform),
+				`export { createMarkdownTransform } from ${JSON.stringify(markdownTransformUrl)};\n`);
+			initTheme("dark", true);
+			process.env.PI_PACKAGE_DIR = root;
+			release = await retainThinkingStepsPatch({
+				fg: (_color, text) => { themeCalls += 1; return text; },
+				bold: (text) => text,
+			});
+			assert.equal(getPatchRefCount(), baselineRefCount + 1);
+			assert.notEqual(HostAssistantMessageComponent.prototype.updateContent, originalMethods[0]);
+			const input: AssistantMessage = {
+				role: "assistant", api: "anthropic-messages", provider: "anthropic", model: "test", timestamp: 10000,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				stopReason: "stop",
+				content: [{ type: "thinking", thinking: "Inspect the host renderer." }, { type: "text", text: "Host answer." }],
+			};
+			const output = stripAnsi(new HostAssistantMessageComponent(input).render(80).join("\n"));
+			assert.match(output, /Thinking Steps/);
+			assert.match(output, /Inspect the host renderer/);
+			assert.match(output, /Host answer/);
+			assert.ok(themeCalls > 0);
+		} finally {
+			await release?.();
+			if (previousPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
+			else process.env.PI_PACKAGE_DIR = previousPackageDir;
+			await rm(root, { recursive: true, force: true });
+		}
+		assert.equal(getPatchRefCount(), baselineRefCount);
+		assert.deepEqual([
+			HostAssistantMessageComponent.prototype.updateContent,
+			HostAssistantMessageComponent.prototype.setHideThinkingBlock,
+			HostAssistantMessageComponent.prototype.setHiddenThinkingLabel,
+		], originalMethods);
 	});
 });
 

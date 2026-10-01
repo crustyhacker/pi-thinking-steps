@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.12"><img alt="release" src="https://img.shields.io/badge/release-v1.0.12-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.13"><img alt="release" src="https://img.shields.io/badge/release-v1.0.13-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -183,13 +183,16 @@ That patch layer is:
 
 This extension intentionally depends on Pi's current internal TUI implementation.
 
-The patch is tested against Pi `0.99.2` and relies on these internal modules in `@earendil-works/pi-coding-agent`:
+The patch is validated against the unbundled Pi `0.99.2` development host and the bundled Pi `1.0.0` CLI.
 
-- `dist/modes/interactive/components/assistant-message.js`
-- `dist/modes/interactive/theme/theme.js`
-- `dist/modes/interactive/components/markdown-transform.js`
+`AssistantMessageComponent` is imported from the host's public `@earendil-works/pi-coding-agent` API, so the patch targets the class that Pi actually renders. A deep import of `dist/modes/interactive/components/assistant-message.js` can return a separate, unused class in bundled Pi installations. Terminal sessions supply their active `ctx.ui.theme` rather than using a separate theme instance.
 
-Internal modules are resolved from the running Pi host via its public `getPackageDir()` API, rather than from a separate extension-local Pi installation. The patch preserves native response padding, assistant-text Markdown transforms, streaming state, terminal message markers, and truncation/error notices. It is installed only in terminal (`tui`) sessions; RPC, JSON, and print sessions retain their native rendering.
+The remaining internal module dependencies are:
+
+- `dist/modes/interactive/components/markdown-transform.js` for native assistant-text transforms
+- `dist/modes/interactive/theme/theme.js` only for direct patch callers that do not supply a UI theme
+
+These internal helpers are resolved from the running Pi host via its public `getPackageDir()` API, rather than from a separate extension-local Pi installation. The patch preserves native response padding, assistant-text Markdown transforms, streaming state, terminal message markers, and truncation/error notices. It is installed only in terminal (`tui`) sessions; RPC, JSON, and print sessions retain their native rendering.
 
 That means:
 
@@ -209,11 +212,19 @@ Pi packages are host-provided peer dependencies, with exact `0.99.2` development
 
 ## Quick start
 
-From the repository root, using Pi `0.99.2`:
+From the repository root, using Pi `0.99.2` or `1.0.0`:
 
 ```bash
 pi -e ./index.ts
 ```
+
+If the npm package is already configured, test the checkout in isolation to avoid loading both copies:
+
+```bash
+pi --no-extensions -e ./index.ts
+```
+
+This disables other automatically loaded and built-in extensions for that invocation; it does not change your saved settings. Editing the checkout does not update an installed npm copy.
 
 The package entry point is already configured in `package.json`:
 

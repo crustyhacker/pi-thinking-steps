@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.13 - 2026-10-01
+
+### Fixed
+
+- Restored thinking-step rendering in Pi 1.0.0's bundled CLI by patching the public host `AssistantMessageComponent` rather than a separate deep-imported renderer.
+- Used the active terminal UI theme while preserving three-mode switching, Alt+T, native rendering metadata, and reversible patch cleanup.
+
+### Changed
+
+- Documented bundled-host compatibility and isolated checkout testing without loading an installed npm copy twice.
+
+### Tests
+
+- Added a regression for public host renderer identity and UI-theme injection without deep renderer or theme modules.
+- Validated all 160 tests and a real bundled Pi 1.0.0 loader smoke check covering mode switching, streaming, Markdown transforms, and cleanup.
+
 ## 1.0.11 - 2026-05-12
 
 ### Fixed

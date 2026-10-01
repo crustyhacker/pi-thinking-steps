@@ -287,7 +287,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		clearActiveThinkingState(undefined, activeScopeKey);
 		if (ctx.mode === "tui") {
 			try {
-				registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
+				registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch(ctx.ui.theme));
 				markSessionDegraded(activeScopeKey, false);
 			} catch (error) {
 				markSessionDegraded(activeScopeKey, true);
