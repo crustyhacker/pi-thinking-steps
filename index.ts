@@ -5,12 +5,15 @@ import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
 import { clearActiveThinkingState, clearThinkingMessageOwnership, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
-import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from "./types.js";
+import type { PersistedThinkingStepsPreferenceScope, ThinkingExportFormat, ThinkingStepsMode } from "./types.js";
+import { buildThinkingExport, saveThinkingExport } from "./export.js";
+import { renderThinkingExportFiles } from "./render.js";
 
 type ThinkingStepsCommandScope = "session" | PersistedThinkingStepsPreferenceScope;
 type ThinkingStepsCommandAction =
 	| { type: "set"; scope: ThinkingStepsCommandScope; mode?: ThinkingStepsMode }
-	| { type: "clear"; scope: PersistedThinkingStepsPreferenceScope };
+	| { type: "clear"; scope: PersistedThinkingStepsPreferenceScope }
+	| { type: "export"; format: ThinkingExportFormat };
 
 const CUSTOM_ENTRY_TYPE = "thinking-steps.mode";
 const DEFAULT_HIDDEN_LABEL = "Thinking...";
@@ -30,7 +33,7 @@ function modeChangeMessage(mode: ThinkingStepsMode, scope: ThinkingStepsCommandS
 }
 
 function invalidUsageMessage(): string {
-	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear]";
+	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both]";
 }
 
 function notifyUser(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
@@ -125,6 +128,12 @@ function parseCommandAction(args: string): ThinkingStepsCommandAction | undefine
 		return { type: "set", scope: "session" };
 	}
 
+	const parts = trimmed.toLowerCase().split(/\s+/);
+	if (parts[0] === "export") {
+		const format = parts[1];
+		return parts.length === 2 && (format === "json" || format === "markdown" || format === "both")
+			? { type: "export", format } : undefined;
+	}
 	const scope = parsePreferenceScope(trimmed.split(/\s+/, 1)[0] ?? "");
 	if (!scope) {
 		const mode = parseThinkingMode(trimmed);
@@ -160,14 +169,19 @@ function thinkingModeCompletions(prefix: string): AutocompleteItem[] | null {
 		return [
 			...MODE_OPTIONS.map((value) => ({ value, label: value })),
 			...SCOPE_OPTIONS.map((value) => ({ value, label: value })),
+			{ value: "export", label: "export" },
 		];
 	}
 
 	const parts = trimmed.split(/\s+/);
 	if (parts.length === 1 && !endsWithWhitespace) {
-		return buildCompletionItems([...MODE_OPTIONS, ...SCOPE_OPTIONS], parts[0] ?? "");
+		return buildCompletionItems([...MODE_OPTIONS, ...SCOPE_OPTIONS, "export"], parts[0] ?? "");
 	}
 
+	if (parts[0]?.toLowerCase() === "export") {
+		if (parts.length > 2 || (endsWithWhitespace && parts.length > 1)) return null;
+		return buildCompletionItems(["json", "markdown", "both"], endsWithWhitespace ? "" : parts[1] ?? "", "export ");
+	}
 	const scope = parsePreferenceScope(parts[0] ?? "");
 	if (!scope) {
 		return null;
@@ -195,7 +209,39 @@ function reportPatchError(ctx: ExtensionContext, error: unknown): void {
 	notifyUser(ctx, `Thinking steps patch error: ${error instanceof Error ? error.message : String(error)}`, "warning");
 }
 
+async function exportThinkingSteps(pi: ExtensionAPI, ctx: ExtensionContext, format: ThinkingExportFormat): Promise<void> {
+	if (!ctx.isIdle()) {
+		notifyUser(ctx, "Wait for the current response to finish before exporting thinking steps.", "warning");
+		return;
+	}
+	const manager = ctx.sessionManager;
+	const sessionFile = manager.getSessionFile();
+	if (!sessionFile) {
+		notifyUser(ctx, "Thinking export requires a persistent session; this session has no file.", "warning");
+		return;
+	}
+	try {
+		const snapshot = buildThinkingExport(manager.getEntries(), manager.getSessionId(), manager.getLeafId());
+		const attachment = await saveThinkingExport(snapshot, sessionFile, format);
+		const paths = attachment.files.map((file) => file.path).join("\n");
+		if (manager.getSessionId() !== snapshot.sessionId || manager.getSessionFile() !== sessionFile || manager.getLeafId() !== snapshot.leafId || !ctx.isIdle()) {
+			notifyUser(ctx, `Thinking export saved, but the session changed; files were not attached:\n${paths}`, "warning");
+			return;
+		}
+		try {
+			pi.appendEntry("thinking-steps.export", attachment);
+		} catch (error) {
+			notifyUser(ctx, `Thinking export saved, but attaching it failed: ${error instanceof Error ? error.message : String(error)}\nFiles:\n${paths}`, "warning");
+			return;
+		}
+		notifyUser(ctx, `Saved thinking review (all recorded branches):\n${paths}`, "info");
+	} catch (error) {
+		notifyUser(ctx, `Thinking export failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
+	}
+}
+
 export default function thinkingStepsExtension(pi: ExtensionAPI): void {
+	pi.registerEntryRenderer("thinking-steps.export", (entry, _options, theme) => renderThinkingExportFiles(entry.data, theme));
 	let sessionScopeKey = getCurrentThinkingScopeKey();
 	const degradedSessionScopes = new Set<string>();
 	const setSessionScopeKey = (scopeKey: string): string => {
@@ -215,7 +261,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	const futureCompatibleSessionMessage = (scope: PersistedThinkingStepsPreferenceScope, action: "saved" | "cleared"): string => `${action === "saved" ? "Saved" : "Cleared"} ${scope} thinking view default for future compatible sessions; the current session is using Pi's native thinking renderer.`;
 
 	pi.registerCommand("thinking-steps", {
-		description: "Switch thinking view or set/clear project/global defaults",
+		description: "Switch thinking view, set/clear defaults, or export a session thinking tree",
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
 			const action = parseCommandAction(args);
@@ -224,6 +270,10 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
+			if (action.type === "export") {
+				await exportThinkingSteps(pi, ctx, action.format);
+				return;
+			}
 			const degraded = isSessionDegraded(ctx.cwd);
 			if (action.type === "clear") {
 				try {

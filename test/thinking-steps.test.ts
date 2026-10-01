@@ -1,3 +1,4 @@
+import "./export.test.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -94,6 +95,8 @@ interface FakeExtensionAPI {
 	commands: Map<string, RegisteredCommand>;
 	shortcuts: RegisteredShortcut[];
 	handlers: Map<string, FakeEventHandler[]>;
+	entryRenderers: Map<string, unknown>;
+	registerEntryRenderer(customType: string, renderer: unknown): void;
 	appendedEntries: Array<{ type: "custom"; customType: string; data: { mode: string } }>;
 	registerCommand(name: string, command: RegisteredCommand): void;
 	registerShortcut(key: unknown, shortcut: Omit<RegisteredShortcut, "key">): void;
@@ -155,6 +158,7 @@ function createFakeExtensionAPI(): FakeExtensionAPI {
 	const commands = new Map<string, RegisteredCommand>();
 	const shortcuts: RegisteredShortcut[] = [];
 	const handlers = new Map<string, FakeEventHandler[]>();
+	const entryRenderers = new Map<string, unknown>();
 	const appendedEntries: Array<{ type: "custom"; customType: string; data: { mode: string } }> = [];
 
 	return {
@@ -162,6 +166,10 @@ function createFakeExtensionAPI(): FakeExtensionAPI {
 		shortcuts,
 		handlers,
 		appendedEntries,
+		entryRenderers,
+		registerEntryRenderer(customType: string, renderer: unknown) {
+			entryRenderers.set(customType, renderer);
+		},
 		registerCommand(name: string, command: RegisteredCommand) {
 			commands.set(name, command);
 		},
@@ -902,7 +910,7 @@ describe("thinkingStepsExtension", () => {
 
 		const command = pi.commands.get("thinking-steps");
 		assert.ok(command);
-		assert.equal(command.description, "Switch thinking view or set/clear project/global defaults");
+		assert.equal(command.description, "Switch thinking view, set/clear defaults, or export a session thinking tree");
 		assert.deepEqual(command.getArgumentCompletions?.("s"), [{ value: "summary", label: "summary" }]);
 		assert.equal(command.getArgumentCompletions?.("z") ?? null, null);
 
@@ -2082,7 +2090,7 @@ describe("thinkingStepsExtension failure paths", () => {
 
 		await command.handler("project unknown-mode", ctx);
 		assert.deepEqual(ctx.ui.notifications.at(-1), {
-			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear]",
+			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both]",
 			level: "warning",
 		});
 		assert.equal(pi.appendedEntries.length, 0);
@@ -3181,7 +3189,7 @@ describe("repo metadata contracts", () => {
 		assert.ok(!persistenceSource.includes("export type PersistedThinkingStepsPreferenceScope"));
 		assert.ok(persistenceSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from \"./types.js\""));
 		const indexSource = await readFile("index.ts", "utf8");
-		assert.ok(indexSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from \"./types.js\""));
+		assert.ok(indexSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingExportFormat, ThinkingStepsMode } from \"./types.js\""));
 
 		const archivedContinuePrompt = await readFile("prompts/continue-2026-04-16.md", "utf8");
 		assert.ok(archivedContinuePrompt.includes("Historical continuation prompt") || archivedContinuePrompt.includes("Archived continue prompt"));

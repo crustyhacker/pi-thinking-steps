@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.14 - 2026-10-01
+
+### Added
+
+- Kept a thinking panel visible for every assistant message in compatible terminal sessions, with honest waiting or missing-content labels when no thinking text is supplied.
+- Added `/thinking-steps export json`, `export markdown`, and `export both` for manual session-linked prompt and thinking-tree snapshots across all recorded branches.
+- Saved exports in private directories beside the session, with durable local file links outside model context. Exports include available thinking and derived steps, but exclude provider signatures, redacted payloads, image bytes, and tool/custom-entry contents.
+
+### Tests
+
+- Added 15 tests covering panel transitions, export formats, branch relationships, private file permissions, session attachment/reopening, payload exclusions, and failure handling.
+- Validated 175 tests and a bundled Pi 1.0.0 loader smoke check for modes, Alt+T, exports, session links, model-context isolation, and reversible cleanup.
+
 ## 1.0.13 - 2026-10-01
 
 ### Fixed

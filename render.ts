@@ -1,14 +1,31 @@
 import type { Component } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { hyperlink, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import { deriveThinkingSteps } from "./parse.js";
 import { getActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode } from "./state.js";
-import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
+import type { DerivedThinkingStep, ThinkingExportAttachment, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
+
+export function renderThinkingExportFiles(data: unknown, theme: ThinkingThemeLike): Component {
+	const invalid = () => new Text(theme.fg("error", "Thinking review: invalid attachment metadata"), 0, 0);
+	if (!data || typeof data !== "object") return invalid();
+	const candidate = data as Partial<ThinkingExportAttachment>;
+	if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.files) || candidate.files.length < 1 || candidate.files.length > 2) return invalid();
+	const lines = [theme.fg("accent", "Thinking review · saved snapshot · all recorded branches")];
+	for (const file of candidate.files) {
+		if (!file || (file.format !== "json" && file.format !== "markdown") || typeof file.path !== "string" || !isAbsolute(file.path)) return invalid();
+		const url = pathToFileURL(file.path).href;
+		lines.push(`${file.format.toUpperCase()}: ${hyperlink(url, url)}`);
+	}
+	return new Text(lines.join("\n"), 0, 0);
+}
 
 interface RenderOptions {
 	mode: "collapsed" | "summary" | "expanded";
 	steps: DerivedThinkingStep[];
 	activeStepId?: string;
 	isActive: boolean;
+	isStreaming?: boolean;
 	nowMs?: number;
 }
 
@@ -363,7 +380,11 @@ function renderExpanded(theme: ThinkingThemeLike, width: number, steps: DerivedT
 }
 
 export function renderThinkingStepsLines(theme: ThinkingThemeLike, width: number, options: RenderOptions): string[] {
-	if (options.steps.length === 0) return [];
+	if (options.steps.length === 0) {
+		const status = options.isStreaming ? "Waiting for thinking content" : "No thinking content supplied";
+		return wrapTextWithAnsi(theme.fg("dim", `Thinking · ${status}`), Math.max(1, width))
+			.map((line) => truncateToWidth(line, width, ""));
+	}
 	if (options.mode === "collapsed") {
 		return renderCollapsed(theme, width, options.steps, options.activeStepId, options.isActive, options.nowMs);
 	}
@@ -385,6 +406,7 @@ export class ThinkingStepsComponent implements Component {
 		blocks: ThinkingSourceBlock[],
 		scopeKey?: string,
 		private readonly outputPad = 0,
+		private readonly isStreaming = false,
 	) {
 		this.steps = deriveThinkingSteps(blocks);
 		this.scopeKey = scopeKey ?? getCurrentThinkingScopeKey();
@@ -408,6 +430,7 @@ export class ThinkingStepsComponent implements Component {
 			steps: this.steps,
 			activeStepId,
 			isActive: active.active,
+			isStreaming: this.isStreaming,
 			nowMs: Date.now(),
 		}).map((line) => truncateToWidth(`${padding}${line}${padding}`, width, ""));
 

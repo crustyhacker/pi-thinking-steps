@@ -57,6 +57,39 @@ export interface ActiveThinkingState {
 	active: boolean;
 }
 
+export type ThinkingExportFormat = "json" | "markdown" | "both";
+
+export interface ThinkingExportNode {
+	id: string;
+	parentId: string | null;
+	timestamp: string;
+	entryType: string;
+	role?: string;
+	text?: string;
+	imageCount?: number;
+	provider?: string;
+	model?: string;
+	thinkingBlocks?: ThinkingSourceBlock[];
+	steps?: DerivedThinkingStep[];
+}
+
+export interface ThinkingExportSnapshot {
+	schemaVersion: 1;
+	sessionId: string;
+	leafId: string | null;
+	exportedAt: string;
+	scope: "all-recorded-branches";
+	nodes: ThinkingExportNode[];
+}
+
+export interface ThinkingExportAttachment {
+	schemaVersion: 1;
+	sessionId: string;
+	leafId: string | null;
+	exportedAt: string;
+	files: Array<{ format: "json" | "markdown"; path: string }>;
+}
+
 export interface ThinkingThemeLike {
 	fg(color: string, text: string): string;
 	bold(text: string): string;

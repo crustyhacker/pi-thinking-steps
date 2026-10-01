@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.13"><img alt="release" src="https://img.shields.io/badge/release-v1.0.13-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.14"><img alt="release" src="https://img.shields.io/badge/release-v1.0.14-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -80,6 +80,7 @@ Use it when you want the whole text, but formatted for a terminal instead of dum
 | Save a global default | `/thinking-steps global <mode>` |
 | Clear a project default | `/thinking-steps project clear` |
 | Clear a global default | `/thinking-steps global clear` |
+| Export the session thinking tree | `/thinking-steps export json` / `export markdown` / `export both` |
 
 ---
 
@@ -130,6 +131,22 @@ Use plain `/thinking-steps <mode>` when the choice should stay local to the curr
 ## Rendering behavior
 
 Pi Thinking Steps is built to improve readability **without changing meaning**.
+
+### Always-visible panel
+
+Every assistant message rendered by a compatible terminal session has a thinking panel in all three modes, including text-only and tool-only responses. Before thinking text arrives it says **Waiting for thinking content**; when a response finishes without any, it says **No thinking content supplied**. Provider-redacted blocks remain marked as hidden. These are availability indicators, not generated reasoning. The extension cannot force a provider to expose thinking or recover hidden content.
+
+### Manual session exports
+
+Run `/thinking-steps export json`, `/thinking-steps export markdown`, or `/thinking-steps export both` while the session is idle. There is no automatic saving. Exports require a persistent session; in-memory sessions receive a clear warning instead.
+
+Each export creates a new private directory beside the session file (`<session-file>.thinking-steps-<unique suffix>`), with `thinking-steps.json`, `thinking-steps.md`, or both. Directories use owner-only permissions and files use mode `0600` on POSIX systems. Repeated exports create independent snapshots rather than overwriting files. Failed writes remove the incomplete export; errors are reported.
+
+A durable `thinking-steps.export` custom entry attaches file references to the session without adding the export to model context or triggering another turn. The transcript displays local file links when this extension is loaded, including after restarting. File links remain local: moving/deleting a session or export does not move/repair those absolute paths. If the session changes while saving, files are kept and their paths reported, but they are not attached to a different session or branch.
+
+**Privacy and scope:** exports contain all recorded branches in the current session file, including abandoned branches and original prompts before later context edits. They are archival snapshots, not reconstructions of the current model context. Separate forked session files are not followed. Treat exports as sensitive conversation data and review them before sharing.
+
+JSON schema version `1` stores session/leaf IDs and a flat tree of entries linked by their original `id` and `parentId`. User text, assistant response text, available thinking blocks, and every derived step are included independently of the selected display mode. Provider signatures, redacted block payloads, image bytes, tool arguments/results, system prompts, and custom-entry payloads are excluded; structural entries retain only metadata to keep branch links intact. Markdown provides a linked tree plus prompt, response, thinking-block, and detailed-step sections. Deep trees cap visual indentation but retain exact parent links. Text is fenced to prevent Markdown/HTML injection, and terminal controls are shown as escapes in Markdown; JSON preserves the supplied text.
 
 ### Parsing and step derivation
 
@@ -280,9 +297,11 @@ That keeps the GitHub README, packaged validation surface, and published package
 - `parse.ts` — thinking-step splitting, summaries, role inference, mode parsing
 - `persistence.ts` — project/global mode preference storage
 - `render.ts` — collapsed, summary, and expanded terminal rendering
+- `export.ts` — session tree snapshots, JSON/Markdown serialization, private export files
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts
 - `test/thinking-steps.test.ts` — unit and integration coverage
+- `test/export.test.ts` — manual export, attachment, privacy, and always-visible panel coverage
 - `test/summarizer-challenger.test.ts` — focused summarizer-regression coverage
 
 ---

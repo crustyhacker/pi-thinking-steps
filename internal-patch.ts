@@ -285,9 +285,10 @@ async function installPatch(providedTheme?: ThinkingThemeLike): Promise<() => vo
 			this.contentContainer.clear();
 
 			const thinkingBlocks = collectThinkingBlocks(message);
-			const hasVisibleContent = hasVisibleTextContent(message) || thinkingBlocks.length > 0;
-			if (hasVisibleContent) {
-				this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Spacer(1));
+			if (thinkingBlocks.length === 0) {
+				this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, [], resolveThinkingMessageScope(message), this.outputPad, this.isStreaming));
+				if (hasVisibleTextContent(message)) this.contentContainer.addChild(new Spacer(1));
 			}
 
 			let renderedThinking = false;
@@ -306,7 +307,7 @@ async function installPatch(providedTheme?: ThinkingThemeLike): Promise<() => vo
 				}
 
 				if (content.type === "thinking" && thinkingBlocks.length > 0 && !renderedThinking) {
-					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks, resolveThinkingMessageScope(message), this.outputPad));
+					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks, resolveThinkingMessageScope(message), this.outputPad, this.isStreaming));
 					renderedThinking = true;
 					if (hasVisibleTextAfterThinking) {
 						this.contentContainer.addChild(new Spacer(1));
