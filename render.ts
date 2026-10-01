@@ -1,5 +1,5 @@
-import type { Component } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { deriveThinkingSteps } from "./parse.js";
 import { getActiveThinkingState, getCurrentThinkingScopeKey, getThinkingStepsMode } from "./state.js";
 import type { DerivedThinkingStep, ThinkingSemanticRole, ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
@@ -384,6 +384,7 @@ export class ThinkingStepsComponent implements Component {
 		private readonly messageTimestamp: number,
 		blocks: ThinkingSourceBlock[],
 		scopeKey?: string,
+		private readonly outputPad = 0,
 	) {
 		this.steps = deriveThinkingSteps(blocks);
 		this.scopeKey = scopeKey ?? getCurrentThinkingScopeKey();
@@ -401,13 +402,14 @@ export class ThinkingStepsComponent implements Component {
 			return this.cachedLines;
 		}
 
-		const lines = renderThinkingStepsLines(this.theme, width, {
+		const padding = " ".repeat(this.outputPad);
+		const lines = renderThinkingStepsLines(this.theme, Math.max(1, width - this.outputPad * 2), {
 			mode,
 			steps: this.steps,
 			activeStepId,
 			isActive: active.active,
 			nowMs: Date.now(),
-		});
+		}).map((line) => truncateToWidth(`${padding}${line}${padding}`, width, ""));
 
 		if (!shouldBypassCache) {
 			this.cacheKey = nextCacheKey;

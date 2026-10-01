@@ -29,7 +29,10 @@ import {
 } from "../state.js";
 import type { ThinkingThemeLike } from "../types.js";
 import thinkingStepsExtension from "../index.js";
-import { Key } from "@mariozechner/pi-tui";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { getPackageDir, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
+import { Key, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { pathToFileURL } from "node:url";
 
 function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-9;]*m/g, "");
@@ -81,6 +84,7 @@ interface FakeUI {
 
 interface FakeExtensionContext {
 	hasUI: boolean;
+	mode: "tui" | "rpc" | "json" | "print";
 	cwd: string;
 	ui: FakeUI;
 	sessionManager: { getEntries(): FakeSessionEntry[] };
@@ -136,6 +140,7 @@ function createFakeContext(entries: FakeSessionEntry[] = [], hasUI = true, cwd =
 	const sessionEntries = [...entries];
 	return {
 		hasUI,
+		mode: hasUI ? "tui" : "print",
 		cwd,
 		ui: createFakeUI(),
 		sessionManager: {
@@ -318,7 +323,7 @@ describe("patch guards", () => {
 	it("reports a specific compatibility error when an internal module cannot be imported", async () => {
 		await assert.rejects(
 			() => importPiCodingAgentInternal("dist/modes/interactive/missing.js"),
-			/could not import internal module "@mariozechner\/pi-coding-agent\/dist\/modes\/interactive\/missing\.js"/,
+			/could not import internal module "@earendil-works\/pi-coding-agent\/dist\/modes\/interactive\/missing\.js"/,
 		);
 	});
 });
@@ -811,7 +816,7 @@ describe("integration patch", () => {
 			const component = new AssistantMessageComponent(message, false);
 			let lines = component.render(100).map(stripAnsi);
 			assert.ok(lines.some((line) => line.includes("Thinking Steps · Summary")));
-			assert.equal(lines.filter((line) => line.startsWith("├─") || line.startsWith("└─")).length, 3);
+			assert.equal(lines.filter((line) => line.trimStart().startsWith("├─") || line.trimStart().startsWith("└─")).length, 3);
 			assert.ok(lines.some((line) => line.includes("Final answer.")));
 
 			setThinkingStepsMode("collapsed");
@@ -2891,6 +2896,149 @@ describe("Batch 2 regressions", () => {
 	});
 });
 
+describe("current Pi compatibility", () => {
+	interface CurrentComponent {
+		render(width: number): string[];
+		updateContent(message: AssistantMessage, isStreaming?: boolean): void;
+		setHiddenThinkingLabel(label: string): void;
+		setOutputPad(padding: number): void;
+		isStreaming: boolean;
+		hasToolCalls: boolean;
+	}
+
+	async function loadCurrentComponent() {
+		const [{ AssistantMessageComponent }, { initTheme }] = await Promise.all([
+			importPiCodingAgentInternal<{
+				AssistantMessageComponent: new (message?: AssistantMessage, hide?: boolean, theme?: MarkdownTheme, label?: string, outputPad?: number, transformers?: MarkdownTransformer[]) => CurrentComponent;
+			}>(PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent),
+			importPiCodingAgentInternal<{ initTheme(name?: string, quiet?: boolean): void }>(PI_CODING_AGENT_INTERNAL_MODULES.theme),
+		]);
+		initTheme("dark", true);
+		return AssistantMessageComponent;
+	}
+
+	function message(): AssistantMessage {
+		return {
+			role: "assistant", api: "anthropic-messages", provider: "anthropic", model: "test", timestamp: 9902,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop",
+			content: [{ type: "thinking", thinking: "Inspect the current renderer." }, { type: "text", text: "Native answer." }],
+		};
+	}
+
+	it("resolves internals from the host's public package directory", () => {
+		assert.equal(resolvePiCodingAgentInternalModuleUrl(PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent),
+			pathToFileURL(join(getPackageDir(), PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent)).href);
+	});
+
+	it("preserves output padding, Markdown transforms, and streaming state", async () => {
+		resetExtensionState();
+		const AssistantMessageComponent = await loadCurrentComponent();
+		const release = await retainThinkingStepsPatch();
+		const transforms: Array<{ messageType: string; isStreaming: boolean; availableWidth: number }> = [];
+		const transformer: MarkdownTransformer = (markdown, context) => {
+			transforms.push(context);
+			return markdown.replace("Native answer.", context.isStreaming ? "Streaming answer." : "Final answer.");
+		};
+		try {
+			const component = new AssistantMessageComponent(undefined, false, undefined, undefined, 3, [transformer]);
+			const input = message();
+			component.updateContent(input, true);
+			let lines = component.render(40).map(stripAnsi);
+			assert.equal(component.isStreaming, true);
+			assert.ok(lines.join("\n").includes("Streaming answer."));
+			assert.ok(lines.some((line) => line.startsWith("   ┆ Thinking Steps")));
+			assert.ok(transforms.some((context) => context.messageType === "assistant" && context.isStreaming && context.availableWidth === 34));
+			component.setHiddenThinkingLabel("refresh");
+			assert.equal(component.isStreaming, true);
+			component.updateContent(input, false);
+			component.setOutputPad(0);
+			lines = component.render(40).map(stripAnsi);
+			assert.equal(component.isStreaming, false);
+			assert.ok(lines.some((line) => line.startsWith("┆ Thinking Steps")));
+			assert.ok(lines.join("\n").includes("Final answer."));
+			component.updateContent({ ...input, content: input.content.filter((content) => content.type === "thinking") });
+			component.setOutputPad(3);
+			for (const width of [1, 8, 20, 40]) {
+				assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
+			}
+		} finally {
+			await release();
+		}
+	});
+
+	it("keeps truncation notices and native tool-call terminal markers correct", async () => {
+		resetExtensionState();
+		const AssistantMessageComponent = await loadCurrentComponent();
+		const release = await retainThinkingStepsPatch();
+		try {
+			const input = message();
+			const component = new AssistantMessageComponent(input);
+			assert.equal(component.hasToolCalls, false);
+			assert.ok(component.render(80).join("\n").includes("\x1b]133;A\x07"));
+			input.content.push({ type: "toolCall", id: "call-1", name: "read", arguments: { path: "index.ts" } });
+			input.stopReason = "length";
+			component.updateContent(input, false);
+			const output = component.render(80).join("\n");
+			assert.equal(component.hasToolCalls, true);
+			assert.ok(!output.includes("\x1b]133;"));
+			assert.ok(stripAnsi(output).includes("Response was truncated before completion."));
+		} finally {
+			await release();
+		}
+	});
+
+	it("does not retain the terminal patch in RPC, JSON, or print mode", async () => {
+		await withPersistenceEnvironment(async ({ cwd }) => {
+			const baselineRefCount = getPatchRefCount();
+			for (const mode of ["rpc", "json", "print"] as const) {
+				resetExtensionState(cwd);
+				const { pi, ctx } = createExtensionHarness([], mode === "rpc", cwd);
+				ctx.mode = mode;
+				try {
+					await getSingleHandler(pi, "session_start")({}, ctx);
+					assert.equal(getPatchRefCount(), baselineRefCount);
+					assert.equal(getThinkingStepsMode(ctx.cwd), "summary");
+					await pi.commands.get("thinking-steps")!.handler("expanded", ctx);
+					assert.equal(getThinkingStepsMode(ctx.cwd), "expanded");
+				} finally {
+					await getSingleHandler(pi, "session_shutdown")({}, ctx);
+				}
+				assert.equal(getPatchRefCount(), baselineRefCount);
+			}
+		});
+	});
+
+	it("loads through Pi's real extension loader and patches its renderer", async () => {
+		await withPersistenceEnvironment(async ({ cwd }) => {
+			resetExtensionState(cwd);
+			const baselineRefCount = getPatchRefCount();
+			const AssistantMessageComponent = await loadCurrentComponent();
+			const { loadExtensions } = await importPiCodingAgentInternal<{
+				loadExtensions(paths: string[], cwd: string): Promise<{
+					errors: unknown[];
+					extensions: Array<{ handlers: Map<string, Array<(event: unknown, ctx: FakeExtensionContext) => Promise<void>>> }>;
+				}>;
+			}>("dist/core/extensions/loader.js");
+			const loaded = await loadExtensions([join(process.cwd(), "index.ts")], cwd);
+			assert.deepEqual(loaded.errors, []);
+			assert.equal(loaded.extensions.length, 1);
+			const extension = loaded.extensions[0]!;
+			const ctx = createFakeContext([], true, cwd);
+			try {
+				await extension.handlers.get("session_start")![0]!({}, ctx);
+				assert.equal(getPatchRefCount(), baselineRefCount + 1);
+				assert.ok(!ctx.ui.notifications.some((notification) => notification.level === "warning"));
+				assert.ok(new AssistantMessageComponent(message()).render(80).map(stripAnsi).join("\n").includes("Thinking Steps · Summary"));
+			} finally {
+				await extension.handlers.get("session_shutdown")![0]!({}, ctx);
+			}
+			assert.equal(getPatchRefCount(), baselineRefCount);
+		});
+	});
+});
+
+
 describe("repo metadata contracts", () => {
 	it("keeps published files, pinned Pi dependencies, docs, and archived prompts aligned", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
@@ -2900,12 +3048,14 @@ describe("repo metadata contracts", () => {
 			pi?: { extensions?: string[] };
 			scripts: Record<string, string>;
 			license: string;
-			dependencies: Record<string, string>;
+			dependencies?: Record<string, string>;
+			peerDependencies: Record<string, string>;
 			devDependencies: Record<string, string>;
+			engines: { node: string };
 		};
 		const packageLock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
 			version: string;
-			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>;
+			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>;
 		};
 		for (const file of packageJson.files) {
 			await assert.doesNotReject(readFile(file, "utf8"));
@@ -2927,14 +3077,15 @@ describe("repo metadata contracts", () => {
 		assert.match(packageJson.scripts.test, /node --import tsx test\/summarizer-challenger\.test\.ts/);
 		assert.ok(packageJson.scripts.test.indexOf("test/thinking-steps.test.ts") < packageJson.scripts.test.indexOf("test/summarizer-challenger.test.ts"));
 		assert.equal(packageJson.license, "MIT");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-ai"], "0.69.0");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-coding-agent"], "0.69.0");
-		assert.equal(packageJson.dependencies["@mariozechner/pi-tui"], "0.69.0");
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-ai"], undefined);
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-coding-agent"], undefined);
-		assert.equal(packageJson.devDependencies["@mariozechner/pi-tui"], undefined);
-		assert.deepEqual(packageLock.packages?.[""]?.dependencies, packageJson.dependencies);
-		assert.ok(!Object.values(packageJson.dependencies).includes("latest"));
+		assert.equal(packageJson.dependencies, undefined);
+		for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+			assert.equal(packageJson.peerDependencies[packageName], "*");
+			assert.equal(packageJson.devDependencies[packageName], "0.99.2");
+			assert.equal(packageLock.packages?.[`node_modules/${packageName}`]?.version, "0.99.2");
+		}
+		assert.deepEqual(packageLock.packages?.[""]?.peerDependencies, packageJson.peerDependencies);
+		assert.deepEqual(packageLock.packages?.[""]?.devDependencies, packageJson.devDependencies);
+		assert.equal(packageJson.engines.node, ">=22.19.0");
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
 
 		const license = await readFile("LICENSE", "utf8");
@@ -2954,10 +3105,10 @@ describe("repo metadata contracts", () => {
 		assert.ok(agents.includes("project clear"));
 		assert.ok(agents.includes("global clear"));
 		assert.ok(agents.includes("session -> project -> global -> summary"));
-		assert.ok(agents.includes(`## Current Version\n${packageJson.version}`));
+		assert.match(agents, new RegExp(`## Current Version\\s+${packageJson.version.replaceAll(".", "\\.")}`));
 		assert.ok(agents.includes("plan.md"));
 		assert.ok(agents.includes("progress.md"));
-		assert.ok(agents.includes("tracked `CHANGELOG.md`"));
+		assert.ok(agents.includes("`CHANGELOG.md` is tracked"));
 		assert.ok(!agents.includes("currently has **no `CHANGELOG.md`"));
 		assert.ok(!agents.includes("summarization-algorithm.md"));
 

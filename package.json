@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
@@ -47,12 +47,18 @@
     "build": "tsc --noEmit",
     "test": "npm run build && node --import tsx test/thinking-steps.test.ts && node --import tsx test/summarizer-challenger.test.ts"
   },
-  "dependencies": {
-    "@mariozechner/pi-ai": "0.69.0",
-    "@mariozechner/pi-coding-agent": "0.69.0",
-    "@mariozechner/pi-tui": "0.69.0"
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.99.2",
+    "@earendil-works/pi-coding-agent": "0.99.2",
+    "@earendil-works/pi-tui": "0.99.2",
     "@types/node": "^24.5.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"

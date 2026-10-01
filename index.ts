@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
-import { Key } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import { Key } from "@earendil-works/pi-tui";
 import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
@@ -285,14 +285,16 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
-		try {
-			registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
-			markSessionDegraded(activeScopeKey, false);
-		} catch (error) {
-			markSessionDegraded(activeScopeKey, true);
-			reportPatchError(ctx, error);
-			notifyUser(ctx, degradedSessionMessage(), "warning");
-			return;
+		if (ctx.mode === "tui") {
+			try {
+				registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch());
+				markSessionDegraded(activeScopeKey, false);
+			} catch (error) {
+				markSessionDegraded(activeScopeKey, true);
+				reportPatchError(ctx, error);
+				notifyUser(ctx, degradedSessionMessage(), "warning");
+				return;
+			}
 		}
 
 		const restoredMode = await restoreMode(ctx);

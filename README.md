@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.11"><img alt="release" src="https://img.shields.io/badge/release-v1.0.11-4f46e5" /></a>
+  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.12"><img alt="release" src="https://img.shields.io/badge/release-v1.0.12-4f46e5" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -183,10 +183,13 @@ That patch layer is:
 
 This extension intentionally depends on Pi's current internal TUI implementation.
 
-Today, the patch relies on these internal modules in `@mariozechner/pi-coding-agent`:
+The patch is tested against Pi `0.99.2` and relies on these internal modules in `@earendil-works/pi-coding-agent`:
 
 - `dist/modes/interactive/components/assistant-message.js`
 - `dist/modes/interactive/theme/theme.js`
+- `dist/modes/interactive/components/markdown-transform.js`
+
+Internal modules are resolved from the running Pi host via its public `getPackageDir()` API, rather than from a separate extension-local Pi installation. The patch preserves native response padding, assistant-text Markdown transforms, streaming state, terminal message markers, and truncation/error notices. It is installed only in terminal (`tui`) sessions; RPC, JSON, and print sessions retain their native rendering.
 
 That means:
 
@@ -200,13 +203,13 @@ That means:
 - assistant message ownership is recorded from lifecycle events so patched rendering can keep a message on its original scope even if another scope becomes current later
 - one registered extension instance still has a single active lifecycle scope for session-level events; Pi should not interleave new unowned sessions through one handler set without a new `session_start`/message ownership path
 
-The current package uses Pi package version `0.69.0` as runtime dependencies in `package.json`, and compatibility-sensitive upgrades must update `package-lock.json` in the same change.
+Pi packages are host-provided peer dependencies, with exact `0.99.2` development pins in `package.json`. Compatibility-sensitive upgrades must update `package-lock.json` in the same change. Node.js `22.19.0` or later is required by the current Pi packages.
 
 ---
 
 ## Quick start
 
-From the repository root:
+From the repository root, using Pi `0.99.2`:
 
 ```bash
 pi -e ./index.ts

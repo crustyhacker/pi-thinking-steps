@@ -1,7 +1,8 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import type { AssistantMessage, ThinkingContent } from "@mariozechner/pi-ai";
-import { Markdown, Spacer, Text } from "@mariozechner/pi-tui";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { AssistantMessage, ThinkingContent } from "@earendil-works/pi-ai";
+import { getPackageDir, type MarkdownTransformer } from "@earendil-works/pi-coding-agent";
+import { Markdown, Spacer, Text, type Component, type MarkdownOptions, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { decrementPatchRefCount, getPatchCleanup, getPatchInstallPromise, incrementPatchRefCount, resolveThinkingMessageScope, setPatchCleanup, setPatchInstallPromise } from "./state.js";
 import { ThinkingStepsComponent } from "./render.js";
 import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
@@ -9,20 +10,25 @@ import type { ThinkingSourceBlock, ThinkingThemeLike } from "./types.js";
 export const PI_CODING_AGENT_INTERNAL_MODULES = {
 	assistantMessageComponent: "dist/modes/interactive/components/assistant-message.js",
 	theme: "dist/modes/interactive/theme/theme.js",
+	markdownTransform: "dist/modes/interactive/components/markdown-transform.js",
 } as const;
 
 interface AssistantMessageComponentPrototype {
-	updateContent(message: AssistantMessage): void;
+	updateContent(message: AssistantMessage, isStreaming?: boolean): void;
 	setHideThinkingBlock(hide: boolean): void;
 	setHiddenThinkingLabel(label: string): void;
 	contentContainer: {
 		clear(): void;
-		addChild(component: unknown): void;
+		addChild(component: Component): void;
 	};
 	lastMessage?: AssistantMessage;
 	hideThinkingBlock: boolean;
-	markdownTheme: unknown;
+	markdownTheme: MarkdownTheme;
 	hiddenThinkingLabel: string;
+	outputPad: number;
+	markdownTransformers: MarkdownTransformer[];
+	isStreaming: boolean;
+	hasToolCalls: boolean;
 }
 
 export function assertPatchableAssistantMessageComponent(value: unknown): { prototype: AssistantMessageComponentPrototype } {
@@ -84,29 +90,12 @@ function fallbackToOriginalUpdateContent(
 	}
 }
 
-function getPackageRoot(packageName: string): string {
-	let entryUrl: string;
-	try {
-		entryUrl = import.meta.resolve(packageName);
-	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not resolve ${packageName} package root. Pi internals may be unavailable or moved.`, {
-			cause: error,
-		});
-	}
-
-	try {
-		const entryPath = fileURLToPath(entryUrl);
-		return dirname(dirname(entryPath));
-	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not derive ${packageName} package root from ${entryUrl}.`, {
-			cause: error,
-		});
-	}
-}
-
 export function resolvePiCodingAgentInternalModuleUrl(relativePath: string): string {
-	const packageRoot = getPackageRoot("@mariozechner/pi-coding-agent");
-	return pathToFileURL(join(packageRoot, relativePath)).href;
+	try {
+		return pathToFileURL(join(getPackageDir(), relativePath)).href;
+	} catch (error) {
+		throw new Error("Thinking Steps patch failed: could not resolve the host Pi package directory.", { cause: error });
+	}
 }
 
 export async function importPiCodingAgentInternal<TModule>(relativePath: string): Promise<TModule> {
@@ -114,7 +103,7 @@ export async function importPiCodingAgentInternal<TModule>(relativePath: string)
 	try {
 		return (await import(moduleUrl)) as TModule;
 	} catch (error) {
-		throw new Error(`Thinking Steps patch failed: could not import internal module "@mariozechner/pi-coding-agent/${relativePath}". Pi internals may have moved.`, {
+		throw new Error(`Thinking Steps patch failed: could not import internal module "@earendil-works/pi-coding-agent/${relativePath}". Pi internals may have moved.`, {
 			cause: error,
 		});
 	}
@@ -147,13 +136,16 @@ function hasVisibleThinkingContent(message: AssistantMessage): boolean {
 }
 
 async function installPatch(): Promise<() => void> {
-	const [{ AssistantMessageComponent: rawAssistantMessageComponent }, { theme: rawTheme }] = await Promise.all([
+	const [{ AssistantMessageComponent: rawAssistantMessageComponent }, { theme: rawTheme }, { createMarkdownTransform }] = await Promise.all([
 		importPiCodingAgentInternal<{ AssistantMessageComponent: unknown }>(
 			PI_CODING_AGENT_INTERNAL_MODULES.assistantMessageComponent,
 		),
 		importPiCodingAgentInternal<{ theme: unknown }>(
 			PI_CODING_AGENT_INTERNAL_MODULES.theme,
 		),
+		importPiCodingAgentInternal<{
+			createMarkdownTransform(messageType: "assistant", isStreaming: boolean, transformers: MarkdownTransformer[]): NonNullable<MarkdownOptions["transform"]>;
+		}>(PI_CODING_AGENT_INTERNAL_MODULES.markdownTransform),
 	]);
 
 	const AssistantMessageComponent = assertPatchableAssistantMessageComponent(rawAssistantMessageComponent);
@@ -280,8 +272,13 @@ async function installPatch(): Promise<() => void> {
 		}
 	};
 
-	const patchedUpdateContent = function patchedUpdateContent(this: AssistantMessageComponentPrototype, message: AssistantMessage): void {
+	const patchedUpdateContent = function patchedUpdateContent(
+		this: AssistantMessageComponentPrototype,
+		message: AssistantMessage,
+		isStreaming = this.isStreaming,
+	): void {
 		this.lastMessage = message;
+		this.isStreaming = isStreaming;
 		if (!hasPatchableContentContainer(this)) {
 			fallbackToOriginalUpdateContent(this, message, "updateContent");
 			return;
@@ -305,12 +302,14 @@ async function installPatch(): Promise<() => void> {
 
 			for (const content of message.content) {
 				if (content.type === "text" && content.text.trim()) {
-					this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme as any));
+					this.contentContainer.addChild(new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
+						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
+					}));
 					continue;
 				}
 
 				if (content.type === "thinking" && thinkingBlocks.length > 0 && !renderedThinking) {
-					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks, resolveThinkingMessageScope(message)));
+					this.contentContainer.addChild(new ThinkingStepsComponent(theme, message.timestamp, thinkingBlocks, resolveThinkingMessageScope(message), this.outputPad));
 					renderedThinking = true;
 					if (hasVisibleTextAfterThinking) {
 						this.contentContainer.addChild(new Spacer(1));
@@ -319,18 +318,22 @@ async function installPatch(): Promise<() => void> {
 			}
 
 			const hasToolCalls = message.content.some((content) => content.type === "toolCall");
-			if (!hasToolCalls) {
+			this.hasToolCalls = hasToolCalls;
+			if (message.stopReason === "length") {
+				this.contentContainer.addChild(new Spacer(1));
+				this.contentContainer.addChild(new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0));
+			} else if (!hasToolCalls) {
 				if (message.stopReason === "aborted") {
 					const abortMessage =
 						message.errorMessage && message.errorMessage !== "Request was aborted"
 							? message.errorMessage
 							: "Operation aborted";
 					this.contentContainer.addChild(new Spacer(1));
-					this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+					this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
 				} else if (message.stopReason === "error") {
 					const errorMessage = message.errorMessage || "Unknown error";
 					this.contentContainer.addChild(new Spacer(1));
-					this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+					this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), this.outputPad, 0));
 				}
 			}
 		} catch (error) {
