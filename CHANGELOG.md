@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.17 - 2026-10-02
+
+### Added
+
+- Added a verbatim provider-thinking browser view with source/derived/all toggles, whitespace-preserving wrapping, and visible escapes for unsafe terminal characters. The three live display modes remain unchanged.
+- Added literal, case-insensitive search across recorded prompts, responses, and available thinking, with bounded results and source-line jumps.
+- Added side-by-side alternate-branch response/thinking comparison, stacked on narrow terminals.
+- Added a session-linked export manager showing available, partial, missing, and unsafe snapshots, with confirmed selective deletion and conservative ownership/file-change checks.
+- Added diagnostics for loaded extension/Pi versions, patch lifecycle state, and recorded thinking availability without conversation text.
+
+### Tests
+
+- Added focused inspection, privacy, deletion-safety, and diagnostic regressions, and expanded real-host loader coverage for the new commands.
+
 ## 1.0.16 - 2026-10-02
 
 ### Added

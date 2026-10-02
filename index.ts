@@ -5,9 +5,12 @@ import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
 import { clearActiveThinkingState, clearThinkingMessageOwnership, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
-import type { PersistedThinkingStepsPreferenceScope, ThinkingAutosaveSettings, ThinkingExportFormat, ThinkingExportScope, ThinkingStepsMode } from "./types.js";
+import type { PersistedThinkingStepsPreferenceScope, ThinkingAutosaveSettings, ThinkingExportFormat, ThinkingExportScope, ThinkingPatchDiagnostic, ThinkingStepsMode } from "./types.js";
 import { parseThinkingAutosaveSettings, readThinkingAutosaveSettings, runThinkingAutosave, THINKING_AUTOSAVE_ENTRY } from "./autosave.js";
-import { openThinkingReview } from "./review.js";
+import { openThinkingReview, safeReviewText } from "./review.js";
+import { openThinkingSearch, openThinkingComparison } from "./inspection.js";
+import { openThinkingExports } from "./archives.js";
+import { thinkingDiagnostics } from "./diagnostics.js";
 import { buildThinkingExport, saveThinkingExport } from "./export.js";
 import { renderThinkingExportFiles } from "./render.js";
 
@@ -41,6 +44,11 @@ type ThinkingStepsCommandAction =
 	| { type: "clear"; scope: PersistedThinkingStepsPreferenceScope }
 	| { type: "export"; format: ThinkingExportFormat; exportScope: ThinkingExportScope }
 	| { type: "review"; exportScope: ThinkingExportScope }
+	| { type: "verbatim"; exportScope: ThinkingExportScope }
+	| { type: "search"; exportScope: ThinkingExportScope; query?: string }
+	| { type: "compare" }
+	| { type: "exports" }
+	| { type: "diagnostics" }
 	| { type: "autosave"; action: "status" | "off" | "on"; settings?: ThinkingAutosaveSettings };
 
 const CUSTOM_ENTRY_TYPE = "thinking-steps.mode";
@@ -61,7 +69,7 @@ function modeChangeMessage(mode: ThinkingStepsMode, scope: ThinkingStepsCommandS
 }
 
 function invalidUsageMessage(): string {
-	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation]";
+	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation] | verbatim [branch|all] | search [branch|all] [text] | compare | exports | diagnostics";
 }
 
 function notifyUser(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
@@ -160,11 +168,18 @@ function parseCommandAction(args: string): ThinkingStepsCommandAction | undefine
 		return parts.length >= 2 && parts.length <= 3 && (format === "json" || format === "markdown" || format === "both") && (scope === "branch" || scope === "all")
 			? { type: "export", format, exportScope: scope === "branch" ? "current-branch" : "all-recorded-branches" } : undefined;
 	}
-	if (parts[0] === "review") {
+	if (parts[0] === "review" || parts[0] === "verbatim") {
 		const scope = parts[1] ?? "branch";
 		return parts.length <= 2 && (scope === "branch" || scope === "all")
-			? { type: "review", exportScope: scope === "branch" ? "current-branch" : "all-recorded-branches" } : undefined;
+			? { type: parts[0], exportScope: scope === "branch" ? "current-branch" : "all-recorded-branches" } : undefined;
 	}
+	if (parts[0] === "search") {
+		let query = trimmed.replace(/^\S+\s*/, "");
+		const scope = parts[1] === "all" ? "all-recorded-branches" : "current-branch";
+		if (parts[1] === "branch" || parts[1] === "all") query = query.replace(/^\S+\s*/, "");
+		return { type: "search", exportScope: scope, query: query || undefined };
+	}
+	if (parts[0] === "compare" || parts[0] === "exports" || parts[0] === "diagnostics") return parts.length === 1 ? { type: parts[0] } : undefined;
 	if (parts[0] === "autosave") {
 		const action = parts[1] ?? "status";
 		if ((action === "status" || action === "off") && parts.length <= 2) return { type: "autosave", action };
@@ -194,7 +209,7 @@ function buildCompletionItems(values: string[], prefix: string, prefixText = "")
 
 function thinkingModeCompletions(prefix: string): AutocompleteItem[] | null {
 	const parts = prefix.trimStart().toLowerCase().split(/\s+/);
-	const root = [...MODE_OPTIONS, ...SCOPE_OPTIONS, "export", "review", "autosave"];
+	const root = [...MODE_OPTIONS, ...SCOPE_OPTIONS, "export", "review", "verbatim", "search", "compare", "exports", "diagnostics", "autosave"];
 	if (parts.length === 1) return buildCompletionItems(root, parts[0] ?? "");
 	const head = parts[0];
 	const tail = parts.at(-1) ?? "";
@@ -204,7 +219,7 @@ function thinkingModeCompletions(prefix: string): AutocompleteItem[] | null {
 		if (parts.length === 3 && ["json", "markdown", "both"].includes(parts[1]!)) return buildCompletionItems(["branch", "all"], tail, before);
 		return null;
 	}
-	if (head === "review") return parts.length === 2 ? buildCompletionItems(["branch", "all"], tail, before) : null;
+	if (head === "review" || head === "verbatim" || head === "search") return parts.length === 2 ? buildCompletionItems(["branch", "all"], tail, before) : null;
 	if (head === "autosave") {
 		if (parts.length === 2) return buildCompletionItems(["on", "off", "status"], tail, before);
 		if (parts[1] !== "on") return null;
@@ -269,6 +284,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer("thinking-steps.export", (entry, _options, theme) => renderThinkingExportFiles(entry.data, theme));
 	let sessionScopeKey = getCurrentThinkingScopeKey();
 	const degradedSessionScopes = new Set<string>();
+	const patchDiagnostics = new Map<string, ThinkingPatchDiagnostic>();
 	let autosaveEpoch = 0;
 	let autosaveRunning = false;
 	const setSessionScopeKey = (scopeKey: string): string => {
@@ -288,7 +304,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	const futureCompatibleSessionMessage = (scope: PersistedThinkingStepsPreferenceScope, action: "saved" | "cleared"): string => `${action === "saved" ? "Saved" : "Cleared"} ${scope} thinking view default for future compatible sessions; the current session is using Pi's native thinking renderer.`;
 
 	pi.registerCommand("thinking-steps", {
-		description: "Switch thinking view, review prompts/responses, export, or configure session autosave",
+		description: "Thinking views, verbatim/search/compare, exports, autosave, and diagnostics",
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
 			const action = parseCommandAction(args);
@@ -301,9 +317,18 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 				await exportThinkingSteps(pi, ctx, action.format, action.exportScope);
 				return;
 			}
-			if (action.type === "review") {
-				try { await openThinkingReview(ctx, action.exportScope); }
+			if (action.type === "review" || action.type === "verbatim") {
+				try { await openThinkingReview(ctx, action.exportScope, action.type === "verbatim" ? "verbatim" : "all"); }
 				catch (error) { notifyUser(ctx, `Thinking review failed: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+				return;
+			}
+			if (action.type === "search" || action.type === "compare" || action.type === "exports" || action.type === "diagnostics") {
+				try {
+					if (action.type === "search") await openThinkingSearch(ctx, action.exportScope, action.query);
+					else if (action.type === "compare") await openThinkingComparison(ctx);
+					else if (action.type === "exports") await openThinkingExports(ctx, () => !autosaveRunning);
+					else notifyUser(ctx, thinkingDiagnostics(ctx, patchDiagnostics.get(ctx.cwd) ?? { status: ctx.mode === "tui" ? "not-started" : "native" }), "info");
+				} catch (error) { notifyUser(ctx, safeReviewText(`Thinking ${action.type} failed: ${error instanceof Error ? error.message : String(error)}`), "warning"); }
 				return;
 			}
 			if (action.type === "autosave") {
@@ -373,12 +398,15 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		autosaveEpoch += 1;
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
+		patchDiagnostics.set(activeScopeKey, { status: ctx.mode === "tui" ? "not-started" : "native" });
 		if (ctx.mode === "tui") {
 			try {
 				registerThinkingPatchRelease(activeScopeKey, await retainThinkingStepsPatch(ctx.ui.theme));
 				markSessionDegraded(activeScopeKey, false);
+				patchDiagnostics.set(activeScopeKey, { status: "active" });
 			} catch (error) {
 				markSessionDegraded(activeScopeKey, true);
+				patchDiagnostics.set(activeScopeKey, { status: "failed", detail: error instanceof Error ? error.message : String(error) });
 				reportPatchError(ctx, error);
 				notifyUser(ctx, degradedSessionMessage(), "warning");
 				return;
@@ -454,6 +482,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		clearActiveThinkingState(undefined, activeScopeKey);
 		clearThinkingMessageOwnership(activeScopeKey);
 		markSessionDegraded(activeScopeKey, false);
+		patchDiagnostics.set(activeScopeKey, { status: "stopped" });
 		if (ctx.hasUI) {
 			ctx.ui.setStatus("thinking-steps", undefined);
 		}
@@ -467,6 +496,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			await releasePatch();
 		} catch (error) {
 			registerThinkingPatchRelease(activeScopeKey, releasePatch);
+			patchDiagnostics.set(activeScopeKey, { status: "cleanup-failed", detail: error instanceof Error ? error.message : String(error) });
 			reportPatchError(ctx, error);
 		}
 	});

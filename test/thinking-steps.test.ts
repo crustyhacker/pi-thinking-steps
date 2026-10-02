@@ -1,5 +1,6 @@
 import "./export.test.js";
 import "./review-autosave.test.js";
+import "./inspection.test.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -911,8 +912,8 @@ describe("thinkingStepsExtension", () => {
 
 		const command = pi.commands.get("thinking-steps");
 		assert.ok(command);
-		assert.equal(command.description, "Switch thinking view, review prompts/responses, export, or configure session autosave");
-		assert.deepEqual(command.getArgumentCompletions?.("s"), [{ value: "summary", label: "summary" }]);
+		assert.equal(command.description, "Thinking views, verbatim/search/compare, exports, autosave, and diagnostics");
+		assert.deepEqual(command.getArgumentCompletions?.("s"), [{ value: "summary", label: "summary" }, { value: "search", label: "search" }]);
 		assert.equal(command.getArgumentCompletions?.("z") ?? null, null);
 
 		assert.equal(pi.shortcuts.length, 1);
@@ -2091,7 +2092,7 @@ describe("thinkingStepsExtension failure paths", () => {
 
 		await command.handler("project unknown-mode", ctx);
 		assert.deepEqual(ctx.ui.notifications.at(-1), {
-			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation]",
+			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation] | verbatim [branch|all] | search [branch|all] [text] | compare | exports | diagnostics",
 			level: "warning",
 		});
 		assert.equal(pi.appendedEntries.length, 0);

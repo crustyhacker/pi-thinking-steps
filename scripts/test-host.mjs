@@ -85,6 +85,25 @@ try {
 	await command.handler("review branch", ctx);
 	assert.equal(viewed.length, 1);
 	assert.match(viewed[0], /Verify the host renderer/);
+	choices.push(0, 0, undefined, undefined);
+	await command.handler("verbatim branch", ctx);
+	assert.match(viewed.at(-1), /verbatim source/);
+	assert.doesNotMatch(viewed.at(-1), /Derived steps/);
+	choices.push(0, undefined);
+	await command.handler("search branch Verify", ctx);
+	assert.match(viewed.at(-1), /Verify the host renderer/);
+	const originalLeaf = manager.getLeafId();
+	manager.branch(manager.getEntries().find((entry) => entry.type === "message" && entry.message.role === "user").id);
+	manager.appendMessage({ ...message, content: [{ type: "thinking", thinking: "ALTERNATE_HOST_THINKING" }] });
+	manager.branch(originalLeaf);
+	choices.push(0, 0, 0);
+	await command.handler("compare", ctx);
+	assert.match(viewed.at(-1), /ALTERNATE_HOST_THINKING/);
+	assert.match(viewed.at(-1), /Verify the host renderer/);
+	await command.handler("diagnostics", ctx);
+	assert.ok(notices.at(-1).message.includes(`Pi runtime version: ${host.VERSION}`));
+	assert.match(notices.at(-1).message, /Session patch status: active/);
+	assert.doesNotMatch(notices.at(-1).message, /HOST_PROMPT_PRIVATE|ALTERNATE_HOST_THINKING|Verify the host renderer/);
 	await command.handler("autosave on json branch 1 thinking", ctx);
 	for (let i = 0; i < 2; i += 1) {
 		manager.appendMessage({ ...message, timestamp: i + 2 });
@@ -95,9 +114,16 @@ try {
 	}
 	assert.equal((await readdir(root)).filter((name) => name.includes("thinking-steps-auto-")).length, 1);
 	assert.match(await readFile(manual.files[0].path, "utf8"), /HOST_PROMPT_PRIVATE/);
+	const linked = [...manager.getEntries()].reverse().filter((entry) => entry.type === "custom" && entry.customType === "thinking-steps.export");
+	const manualIndex = linked.findIndex((entry) => entry.data.files[0].path === manual.files[0].path);
+	assert.ok(manualIndex >= 0);
+	choices.push(manualIndex, 1, undefined);
+	await command.handler("exports", ctx);
+	await assert.rejects(readFile(manual.files[0].path), /ENOENT/);
+	assert.equal((await readdir(root)).filter((name) => name.includes("thinking-steps-auto-")).length, 1);
 	assert.deepEqual(manager.buildSessionContext().messages.slice(0, modelContext.length), modelContext);
 	assert.deepEqual(notices.filter((notice) => notice.level === "warning"), []);
-	console.log(`Host loader smoke passed (${bundled ? "bundled" : "unbundled"}; renderer, export, review, autosave).`);
+	console.log(`Host loader smoke passed (${bundled ? "bundled" : "unbundled"}; renderer, export manager, verbatim/search/compare, diagnostics, autosave).`);
 } finally {
 	try {
 		if (extension && ctx) for (const handler of extension.handlers.get("session_shutdown") ?? []) await handler({}, ctx);

@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/crustyhacker/pi-thinking-steps/releases/tag/v1.0.16"><img alt="release" src="https://img.shields.io/badge/release-v1.0.16-4f46e5" /></a>
+  <a href="https://github.com/crustyhacker/pi-thinking-steps/releases/tag/v1.0.17"><img alt="release" src="https://img.shields.io/badge/release-v1.0.17-4f46e5" /></a>
   <a href="https://www.npmjs.com/package/pi-thinking-steps"><img alt="npm version" src="https://img.shields.io/npm/v/pi-thinking-steps" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
@@ -163,7 +163,41 @@ The schema's `scope` is `current-branch` or `all-recorded-branches`; `content` i
 
 Run `/thinking-steps review` for the current branch or `/thinking-steps review all` for every recorded branch. Select a prompt, then a response, to inspect the original text, provider-supplied thinking blocks, and derived steps. Alternate responses are associated through their actual ancestry, not adjacent transcript positions. The viewer is read-only and captures a snapshot when opened; it neither edits the session nor sends content to a model or service.
 
-Use arrow keys, Page Up/Down, and Home/End to scroll. Escape returns to the response list, then the prompt list, then Pi. Terminal control characters are displayed as escapes; missing and provider-hidden thinking are clearly marked. The browser requires the interactive TUI. Other modes can use manual exports.
+Use arrow keys, Page Up/Down, and Home/End to scroll. Escape returns to the response list, then the prompt list, then Pi. Press **v** for verbatim source, **s** for derived steps, or **a** for the complete review. Terminal control characters are displayed as escapes; missing and provider-hidden thinking are clearly marked. The browser requires the interactive TUI. Other modes can use manual exports.
+
+### Verbatim source, search, and comparison
+
+```text
+/thinking-steps verbatim [branch|all]
+/thinking-steps search [branch|all] [literal text]
+/thinking-steps compare
+```
+
+`verbatim` opens the review browser directly on provider-supplied thinking rather than derived steps. It preserves recorded whitespace, blank lines, punctuation, and Markdown markers without summarizing or formatting them. Unsafe terminal characters (including tabs, carriage returns, escape sequences, and bidi overrides) appear as visible Unicode escapes; extremely narrow terminals also escape glyphs too wide to fit. Soft wrapping is presentation only. Use JSON exports for the underlying recorded strings. This does not add a fourth live display mode or reveal hidden/redacted reasoning.
+
+`search` defaults to the current branch; `all` includes abandoned branches recorded in this session file. Omit the text to get an input dialog. Search is literal, Unicode-aware, and case-insensitive—not a regular expression or a shell command, so quotes are literal too. The first 200 occurrences are listed with entry ID, source field/block, line, and context. Select one to jump to its source line; Escape returns to results. Narrow the query when results are capped. Only prompt text, response text, and available source thinking are searched, not derived summaries, signatures, tool payloads, or redacted content. To search for the word `all` itself, use `search branch all`.
+
+`compare` offers responses on different recorded branches under the same prompt. Sequential assistant continuations on one branch are not treated as alternatives. It displays response text and verbatim thinking in two columns, stacking them below 60 terminal columns. No semantic diff is invented, and separate fork files are not followed.
+
+All three tools are read-only TUI snapshots: they do not call a model, modify the session, change its branch, or enable autosaving.
+
+### Manage saved exports
+
+```text
+/thinking-steps exports
+```
+
+The manager lists this session's recorded export attachments across all branches. Status is **available**, **partial**, **missing**, or **unsafe** (not eligible for deletion, with a diagnostic). Missing links may have expired through retention, been deleted, or been moved; the manager does not guess which or scan the filesystem for unlinked snapshots. Inspect paths without changing anything, or select one snapshot for permanent deletion from an idle session and confirm its exact files.
+
+Deletion accepts only recognized snapshot directories beside this session file, validates automatic ownership markers, rejects unexpected files and symbolic links, and rechecks the selection after confirmation. It removes known regular files and their empty directory, never recursively deletes a directory, and never changes session history, other snapshots, or autosave settings. Existing links then show as missing; there is no undo. File changes or I/O failures stop deletion with an actionable diagnostic, including any files already removed. Avoid external modification of snapshot directories while managing them; local filesystem checks are not a security boundary against a hostile process with the same account's permissions.
+
+### Compatibility diagnostics
+
+```text
+/thinking-steps diagnostics
+```
+
+Reports the extension version captured at module load, the public running-Pi version and locations, display/mode settings, this session's patch lifecycle status, shared patch reference count, and current-branch thinking availability. The latest recorded assistant response is distinguished from a still-running response that may not yet have been persisted. It includes no prompt, response, or thinking text and changes nothing. Local paths and provider/model identifiers are included, so review the report before sharing it. Updating files on disk does not prove that already-loaded code changed; restart or reload before comparing versions. Availability counts cannot establish what hidden reasoning a provider might have withheld.
 
 ### Opt-in automatic exports
 
@@ -332,7 +366,7 @@ PI_TEST_HOST_PACKAGE=/absolute/path/to/pi-coding-agent npm run test:host
 
 `test:package` packs into a temporary directory, extracts the actual tarball, installs its declared development dependencies, and runs `npm test` without repository-only files. It requires npm registry access and `tar`; it never publishes. Repository lockfile integrity is checked separately; ignored agent instructions and archived workflow prompts are not prerequisites for packaged tests.
 
-`test:host` uses the selected host's real extension loader, selecting its bundle when present. It checks public-renderer identity, deep-copy isolation, mode switching, Alt+T, missing/streaming states, padding, and cleanup. The CI workflow serially exercises Node `22.19.0`/`24` with Pi `0.99.2`/`1.0.0`, without changing the development pins. CI jobs run these gates after `npm test`; a local pass does not imply the remote workflow has run.
+`test:host` uses the selected host's real extension loader, selecting its bundle when present. It checks public-renderer identity, deep-copy isolation, mode switching, Alt+T, missing/streaming states, padding, review/search/comparison, managed export deletion, diagnostics, autosaving, and cleanup. The CI workflow serially exercises Node `22.19.0`/`24` with Pi `0.99.2`/`1.0.0`, without changing the development pins. CI jobs run these gates after `npm test`; a local pass does not imply the remote workflow has run.
 
 ---
 
@@ -361,7 +395,10 @@ That keeps the GitHub README, packaged validation surface, and published package
 - `persistence.ts` — project/global mode preference storage
 - `render.ts` — collapsed, summary, and expanded terminal rendering
 - `export.ts` — scoped snapshots, JSON/Markdown serialization, private export files
-- `review.ts` — read-only prompt/response/thinking browser
+- `review.ts` — read-only prompt/response/thinking browser and safe verbatim viewer
+- `inspection.ts` — literal recorded-text search and alternate-branch comparison
+- `archives.ts` — session-linked export inspection and confirmed selective deletion
+- `diagnostics.ts` — loaded versions, patch state, and recorded availability reports
 - `autosave.ts` — session opt-in settings, automatic snapshots, conservative retention
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts
@@ -369,6 +406,7 @@ That keeps the GitHub README, packaged validation surface, and published package
 - `test/export.test.ts` — manual export, attachment, privacy, and always-visible panel coverage
 - `test/summarizer-challenger.test.ts` — focused summarizer-regression coverage
 - `test/review-autosave.test.ts` — branch scope, browser, consent, privacy, and retention regressions
+- `test/inspection.test.ts` — verbatim fidelity, search/comparison, safe deletion, and diagnostics
 - `test/repository.test.ts` — repository-only lockfile integrity
 - `.github/workflows/ci.yml` — compatibility and extracted-package gates
 

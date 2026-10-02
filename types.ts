@@ -1,6 +1,42 @@
 export type ThinkingStepsMode = "collapsed" | "summary" | "expanded";
 export type PersistedThinkingStepsPreferenceScope = "project" | "global";
 
+export type ThinkingReviewView = "all" | "verbatim" | "steps";
+export interface ThinkingReviewViewerOptions {
+	title?: string;
+	variants?: Record<ThinkingReviewView, string>;
+	initialView?: ThinkingReviewView;
+	jumpToLine?: number;
+	layout?: (width: number) => string[];
+}
+
+export interface ThinkingReviewMatch {
+	nodeId: string;
+	field: "prompt" | "response" | "thinking";
+	contentIndex?: number;
+	line: number;
+	preview: string;
+	text: string;
+}
+
+export interface ThinkingPatchDiagnostic {
+	status: "not-started" | "active" | "native" | "failed" | "stopped" | "cleanup-failed";
+	detail?: string;
+}
+
+export interface ThinkingSavedExport {
+	entryId: string;
+	attachment?: ThinkingExportAttachment;
+	status: "available" | "partial" | "missing" | "unsafe";
+	detail: string;
+}
+
+export interface ThinkingExportDeletionPlan {
+	directory: string;
+	fingerprint: string;
+	files: string[];
+}
+
 export interface ThinkingReviewGroup {
 	prompt?: ThinkingExportNode;
 	responses: ThinkingExportNode[];

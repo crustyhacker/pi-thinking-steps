@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
@@ -31,6 +31,9 @@
     "export.ts",
     "autosave.ts",
     "review.ts",
+    "inspection.ts",
+    "archives.ts",
+    "diagnostics.ts",
     "internal-patch.ts",
     "parse.ts",
     "persistence.ts",
@@ -41,6 +44,7 @@
     "test/thinking-steps.test.ts",
     "test/export.test.ts",
     "test/review-autosave.test.ts",
+    "test/inspection.test.ts",
     "test/summarizer-challenger.test.ts",
     "scripts/test-package.mjs",
     "scripts/test-host.mjs"
