@@ -2,29 +2,50 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { deriveThinkingSteps } from "./parse.js";
-import type { ThinkingExportAttachment, ThinkingExportFormat, ThinkingExportNode, ThinkingExportSnapshot } from "./types.js";
+import type { ThinkingExportAttachment, ThinkingExportFormat, ThinkingExportNode, ThinkingExportOptions, ThinkingExportSnapshot } from "./types.js";
 
 export function buildThinkingExport(
 	entries: readonly SessionEntry[],
 	sessionId: string,
 	leafId: string | null,
 	exportedAt = new Date().toISOString(),
+	options: ThinkingExportOptions = {},
 ): ThinkingExportSnapshot {
-	const nodes: ThinkingExportNode[] = entries.map((entry) => {
+	const scope = options.scope ?? "all-recorded-branches";
+	const content = options.content ?? "conversation";
+	if (scope !== "current-branch" && scope !== "all-recorded-branches") throw new Error("Unknown thinking export scope.");
+	if (content !== "conversation" && content !== "thinking-only") throw new Error("Unknown thinking export content selection.");
+	const snapshot: ThinkingExportSnapshot = {
+		schemaVersion: 1, sessionId, leafId, exportedAt, scope, content,
+		nodes: entries.map((entry) => ({ id: entry.id, parentId: entry.parentId, timestamp: entry.timestamp, entryType: entry.type })),
+	};
+	orderedTree(snapshot);
+	let selected = entries;
+	if (scope === "current-branch") {
+		const byId = new Map(entries.map((entry) => [entry.id, entry]));
+		const branch: SessionEntry[] = [];
+		for (let id = leafId; id !== null;) {
+			const entry = byId.get(id)!;
+			branch.push(entry);
+			id = entry.parentId;
+		}
+		selected = branch.reverse();
+	}
+	snapshot.nodes = selected.map((entry) => {
 		const node: ThinkingExportNode = {
 			id: entry.id, parentId: entry.parentId, timestamp: entry.timestamp, entryType: entry.type,
 		};
 		if (entry.type !== "message") return node;
 		const message = entry.message;
 		node.role = message.role;
-		if (message.role === "user") {
+		if (message.role === "user" && content === "conversation") {
 			node.text = typeof message.content === "string" ? message.content
 				: message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 			node.imageCount = typeof message.content === "string" ? 0 : message.content.filter((part) => part.type === "image").length;
 		} else if (message.role === "assistant") {
 			node.provider = message.provider;
 			node.model = message.model;
-			node.text = message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			if (content === "conversation") node.text = message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 			node.thinkingBlocks = message.content.flatMap((part, contentIndex) => part.type === "thinking"
 				? [{ contentIndex, text: part.redacted ? "" : part.thinking, redacted: part.redacted === true }]
 				: []);
@@ -32,8 +53,6 @@ export function buildThinkingExport(
 		}
 		return node;
 	});
-	const snapshot: ThinkingExportSnapshot = { schemaVersion: 1, sessionId, leafId, exportedAt, scope: "all-recorded-branches", nodes };
-	orderedTree(snapshot);
 	return snapshot;
 }
 
@@ -73,10 +92,12 @@ export function renderThinkingExportMarkdown(snapshot: ThinkingExportSnapshot): 
 	const labels = new Map(ordered.map(({ node }, index) => [node.id, `Entry ${index + 1}`]));
 	const lines = [
 		"# Thinking steps review", "",
-		"Local snapshot of all recorded branches, not just the active conversation. Historical content is included; later context edits are not applied.",
+		snapshot.scope === "current-branch" ? "Local snapshot of the current branch only." : "Local snapshot of all recorded branches, not just the active conversation.",
+		"Historical content is included; later context edits are not applied.",
+		snapshot.content === "thinking-only" ? "Prompt and response text are omitted. Thinking can still contain sensitive information quoted from the conversation." : "Prompt and response text are included.",
 		"Only provider-supplied thinking is available. Hidden reasoning, signatures, image bytes, tool payloads, and custom-entry contents are not exported.",
 		"JSON preserves original text; Markdown displays terminal control characters as escapes. Treat both as sensitive conversation data.", "",
-		"## Session", "", fencedText(JSON.stringify({ sessionId: snapshot.sessionId, leafId: snapshot.leafId, exportedAt: snapshot.exportedAt }, null, 2)), "",
+		"## Session", "", fencedText(JSON.stringify({ sessionId: snapshot.sessionId, leafId: snapshot.leafId, exportedAt: snapshot.exportedAt, scope: snapshot.scope, content: snapshot.content ?? "conversation" }, null, 2)), "",
 		"## Tree", "",
 	];
 	for (const { node, depth } of ordered) {
@@ -93,9 +114,7 @@ export function renderThinkingExportMarkdown(snapshot: ThinkingExportSnapshot): 
 		lines.push("", "### Available thinking", "");
 		const blocks = node.thinkingBlocks ?? [];
 		if (!blocks.some((block) => block.redacted || block.text.trim())) lines.push("No thinking content supplied.");
-		for (const block of blocks) {
-			lines.push(`Block ${block.contentIndex}:`, "", block.redacted ? "Reasoning is hidden by the provider." : fencedText(block.text), "");
-		}
+		for (const block of blocks) lines.push(`Block ${block.contentIndex}:`, "", block.redacted ? "Reasoning is hidden by the provider." : fencedText(block.text), "");
 		if (node.steps?.length) lines.push("### Derived steps", "");
 		for (const [index, step] of (node.steps ?? []).entries()) {
 			lines.push(`#### Step ${index + 1} · block ${step.contentIndex}`, "", fencedText(step.summary), "", fencedText(step.body), "");
@@ -108,13 +127,14 @@ export async function saveThinkingExport(
 	snapshot: ThinkingExportSnapshot,
 	sessionFile: string,
 	format: ThinkingExportFormat,
+	automatic = false,
 ): Promise<ThinkingExportAttachment> {
 	if (!isAbsolute(sessionFile)) throw new Error("Thinking exports require an absolute, persistent session file path.");
 	if (!["json", "markdown", "both"].includes(format)) throw new Error("Unknown thinking export format.");
 	const outputs: Array<{ format: "json" | "markdown"; name: string; content: string }> = [];
 	if (format !== "markdown") outputs.push({ format: "json", name: "thinking-steps.json", content: `${JSON.stringify(snapshot, null, 2)}\n` });
 	if (format !== "json") outputs.push({ format: "markdown", name: "thinking-steps.md", content: renderThinkingExportMarkdown(snapshot) });
-	const directory = await mkdtemp(`${sessionFile}.thinking-steps-`);
+	const directory = await mkdtemp(`${sessionFile}.thinking-steps-${automatic ? "auto-" : ""}`);
 	try {
 		const files: ThinkingExportAttachment["files"] = [];
 		for (const output of outputs) {
@@ -122,7 +142,8 @@ export async function saveThinkingExport(
 			await writeFile(path, output.content, { encoding: "utf8", mode: 0o600, flag: "wx" });
 			files.push({ format: output.format, path });
 		}
-		return { schemaVersion: 1, sessionId: snapshot.sessionId, leafId: snapshot.leafId, exportedAt: snapshot.exportedAt, files };
+		if (automatic) await writeFile(join(directory, "autosave.json"), JSON.stringify({ schemaVersion: 1, sessionId: snapshot.sessionId, files: outputs.map((output) => output.name) }), { encoding: "utf8", mode: 0o600, flag: "wx" });
+		return { schemaVersion: 1, sessionId: snapshot.sessionId, leafId: snapshot.leafId, exportedAt: snapshot.exportedAt, scope: snapshot.scope, content: snapshot.content, automatic, files };
 	} catch (error) {
 		try {
 			await rm(directory, { recursive: true, force: true });

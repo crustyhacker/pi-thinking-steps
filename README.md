@@ -9,7 +9,7 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/crustyhacker/pi-thinking-steps/releases/tag/v1.0.15"><img alt="release" src="https://img.shields.io/badge/release-v1.0.15-4f46e5" /></a>
+  <a href="https://github.com/crustyhacker/pi-thinking-steps/releases/tag/v1.0.16"><img alt="release" src="https://img.shields.io/badge/release-v1.0.16-4f46e5" /></a>
   <a href="https://www.npmjs.com/package/pi-thinking-steps"><img alt="npm version" src="https://img.shields.io/npm/v/pi-thinking-steps" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
@@ -43,7 +43,9 @@ The goal is simple: **preserve meaning, improve readability, and stay native to 
 
 - **Three focused modes** — `collapsed`, `summary`, `expanded`
 - **Always-visible thinking panels** — honest waiting or missing-content indicators when the provider supplies no thinking text
-- **Session-linked review files** — manually export prompts and available thinking as a branching tree in JSON, Markdown, or both
+- **Session-linked review files** — export the current branch or all branches in JSON, Markdown, or both
+- **In-Pi review browser** — navigate recorded prompts, responses, and available thinking without another model turn
+- **Opt-in automatic snapshots** — session-specific consent, content controls, and bounded retention; off by default
 - **Terminal-first rendering** — width-aware, ANSI-safe, and live-update friendly
 - **Faithful parsing** — deterministic step derivation and restrained summarization
 - **Markdown-aware output** — headings, bullets, ordered lists, code spans, and emphasis render cleanly
@@ -83,7 +85,11 @@ Use it when you want the whole text, but formatted for a terminal instead of dum
 | Save a global default | `/thinking-steps global <mode>` |
 | Clear a project default | `/thinking-steps project clear` |
 | Clear a global default | `/thinking-steps global clear` |
-| Export the session thinking tree | `/thinking-steps export json` / `export markdown` / `export both` |
+| Export the session thinking tree | `/thinking-steps export json` / `export markdown` / `export both` (all branches by default) |
+| Export only the current branch | `/thinking-steps export both branch` |
+| Browse prompts, responses, and thinking | `/thinking-steps review` (current branch) / `review all` |
+| Inspect or disable autosaving | `/thinking-steps autosave status` / `autosave off` |
+| Enable autosaving with confirmation | `/thinking-steps autosave on` (JSON, current branch, keep 10, thinking only) |
 
 ---
 
@@ -141,15 +147,41 @@ Every assistant message rendered by a compatible terminal session has a thinking
 
 ### Manual session exports
 
-Run `/thinking-steps export json`, `/thinking-steps export markdown`, or `/thinking-steps export both` while the session is idle. There is no automatic saving. Exports require a persistent session; in-memory sessions receive a clear warning instead.
+Run `/thinking-steps export json`, `/thinking-steps export markdown`, or `/thinking-steps export both` while the session is idle. Existing commands retain their all-branches default. Append `branch` for only the current leaf's ancestry, or `all` explicitly: `/thinking-steps export both branch`. Automatic saving is off unless separately enabled below. Exports require a persistent session; in-memory sessions receive a clear warning instead.
 
 Each export creates a new private directory beside the session file (`<session-file>.thinking-steps-<unique suffix>`), with `thinking-steps.json`, `thinking-steps.md`, or both. Directories use owner-only permissions and files use mode `0600` on POSIX systems. Repeated exports create independent snapshots rather than overwriting files. Failed writes remove the incomplete export; errors are reported.
 
 A durable `thinking-steps.export` custom entry attaches file references to the session without adding the export to model context or triggering another turn. The transcript displays local file links when this extension is loaded, including after restarting. File links remain local: moving/deleting a session or export does not move/repair those absolute paths. If the session changes while saving, files are kept and their paths reported, but they are not attached to a different session or branch.
 
-**Privacy and scope:** exports contain all recorded branches in the current session file, including abandoned branches and original prompts before later context edits. They are archival snapshots, not reconstructions of the current model context. Separate forked session files are not followed. Treat exports as sensitive conversation data and review them before sharing.
+**Privacy and scope:** `all` includes all recorded branches in the current session file, including abandoned branches; `branch` includes only the current leaf and its ancestors, preserving original IDs and structural links. Both retain original historical content before later context edits. They are archival snapshots, not reconstructions of the current model context. Separate forked session files are not followed. Treat exports as sensitive conversation data and review them before sharing.
 
 JSON schema version `1` stores session/leaf IDs and a flat tree of entries linked by their original `id` and `parentId`. User text, assistant response text, available thinking blocks, and every derived step are included independently of the selected display mode. Provider signatures, redacted block payloads, image bytes, tool arguments/results, system prompts, and custom-entry payloads are excluded; structural entries retain only metadata to keep branch links intact. Markdown provides a linked tree plus prompt, response, thinking-block, and detailed-step sections. Deep trees cap visual indentation but retain exact parent links. Text is fenced to prevent Markdown/HTML injection, and terminal controls are shown as escapes in Markdown; JSON preserves the supplied text.
+
+The schema's `scope` is `current-branch` or `all-recorded-branches`; `content` is `conversation` or `thinking-only`. Earlier version-1 exports without `content` contain conversation text. Manual exports include conversation text; automatic exports can omit it.
+
+### In-Pi review browser
+
+Run `/thinking-steps review` for the current branch or `/thinking-steps review all` for every recorded branch. Select a prompt, then a response, to inspect the original text, provider-supplied thinking blocks, and derived steps. Alternate responses are associated through their actual ancestry, not adjacent transcript positions. The viewer is read-only and captures a snapshot when opened; it neither edits the session nor sends content to a model or service.
+
+Use arrow keys, Page Up/Down, and Home/End to scroll. Escape returns to the response list, then the prompt list, then Pi. Terminal control characters are displayed as escapes; missing and provider-hidden thinking are clearly marked. The browser requires the interactive TUI. Other modes can use manual exports.
+
+### Opt-in automatic exports
+
+Autosaving starts **off**. Enable it from an idle, persistent TUI session and accept the storage/retention confirmation:
+
+```text
+/thinking-steps autosave on
+/thinking-steps autosave on both branch 10 thinking
+/thinking-steps autosave on json all 5 conversation
+/thinking-steps autosave status
+/thinking-steps autosave off
+```
+
+The optional positional arguments are format (`json`, `markdown`, `both`), scope (`branch`, `all`), number of snapshots to keep (`1`–`50`), and content (`thinking`, `conversation`). Defaults are `json branch 10 thinking`. Thinking-only snapshots omit user prompt and assistant response text, but thinking itself can quote sensitive conversation content; this is **not secret detection or anonymization**. The same signature, redacted-payload, image, tool, system-prompt, and custom-payload exclusions apply to every export. Nothing is uploaded.
+
+Settings are saved as non-model custom entries for this session ID, apply across its branches, and survive reopening. New and separately forked sessions start off. Each completed TUI agent run saves available recorded content; aborted/error responses are skipped. This is an `agent_end` snapshot, not a guarantee that Pi will not retry or continue afterward. Autosaving does not run in RPC, JSON, or print mode and does not trigger another turn.
+
+Automatic snapshots live beside the session file in `<session-file>.thinking-steps-auto-<unique suffix>` directories with an ownership marker. After a successful save and attachment, retention keeps the selected number of owned automatic snapshots. Manual exports and other sessions are never pruned. Unknown files, symbolic links, malformed markers, or I/O failures stop cleanup and produce a warning rather than deleting unrecognized data. A failed cleanup can temporarily exceed the retention limit. Old session attachment links are marked as subject to retention and can point to already-pruned files. Disabling autosaving preserves existing snapshots. File permissions remain owner-only on POSIX; this is local storage, not encryption.
 
 ### Parsing and step derivation
 
@@ -289,6 +321,19 @@ Typecheck only:
 ```bash
 npm run build
 ```
+Additional validation gates (run sequentially):
+
+```bash
+node --import tsx test/repository.test.ts
+npm run test:package
+npm run test:host
+PI_TEST_HOST_PACKAGE=/absolute/path/to/pi-coding-agent npm run test:host
+```
+
+`test:package` packs into a temporary directory, extracts the actual tarball, installs its declared development dependencies, and runs `npm test` without repository-only files. It requires npm registry access and `tar`; it never publishes. Repository lockfile integrity is checked separately; ignored agent instructions and archived workflow prompts are not prerequisites for packaged tests.
+
+`test:host` uses the selected host's real extension loader, selecting its bundle when present. It checks public-renderer identity, deep-copy isolation, mode switching, Alt+T, missing/streaming states, padding, and cleanup. The CI workflow serially exercises Node `22.19.0`/`24` with Pi `0.99.2`/`1.0.0`, without changing the development pins. CI jobs run these gates after `npm test`; a local pass does not imply the remote workflow has run.
+
 ---
 
 ## Published package contents
@@ -302,6 +347,7 @@ The package ships:
 - `tsconfig.json`
 - the published validation tests under `test/`
 - the README SVG assets under `assets/`
+- standalone package and host validation scripts under `scripts/`
 
 That keeps the GitHub README, packaged validation surface, and published package presentation aligned.
 
@@ -314,12 +360,17 @@ That keeps the GitHub README, packaged validation surface, and published package
 - `parse.ts` — thinking-step splitting, summaries, role inference, mode parsing
 - `persistence.ts` — project/global mode preference storage
 - `render.ts` — collapsed, summary, and expanded terminal rendering
-- `export.ts` — session tree snapshots, JSON/Markdown serialization, private export files
+- `export.ts` — scoped snapshots, JSON/Markdown serialization, private export files
+- `review.ts` — read-only prompt/response/thinking browser
+- `autosave.ts` — session opt-in settings, automatic snapshots, conservative retention
 - `state.ts` — shared mode, active-thinking state, patch lifecycle state
 - `types.ts` — shared contracts
 - `test/thinking-steps.test.ts` — unit and integration coverage
 - `test/export.test.ts` — manual export, attachment, privacy, and always-visible panel coverage
 - `test/summarizer-challenger.test.ts` — focused summarizer-regression coverage
+- `test/review-autosave.test.ts` — branch scope, browser, consent, privacy, and retention regressions
+- `test/repository.test.ts` — repository-only lockfile integrity
+- `.github/workflows/ci.yml` — compatibility and extracted-package gates
 
 ---
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.16 - 2026-10-02
+
+### Added
+
+- Added explicit current-branch or all-branches export selection. Existing export commands retain their all-branches default; append `branch` to export only the current leaf's ancestry.
+- Added `/thinking-steps review [branch|all]`, a read-only terminal browser for recorded prompts, responses, provider-supplied thinking, and derived steps.
+- Added session-specific, opt-in automatic exports with confirmation, format/scope/content controls, and retention of 1–50 owned snapshots. Defaults are JSON, current branch, thinking only, and 10 snapshots; autosaving is off until enabled. Manual exports are never pruned.
+- Added compatibility CI for Node 22.19.0/24 and Pi 0.99.2/1.0.0, including real bundled-host loader checks.
+
+### Fixed
+
+- Made published tests self-contained instead of requiring unpublished workflow documents or the repository lockfile. Added an actual packed/extracted-package validation command and a separate repository lockfile check.
+
+### Tests
+
+- Added 11 branch-selection, review-browser, autosave-consent, privacy, retention, and failure-path regressions.
+- Validated 186 behavior/metadata tests, a separate lockfile integrity test, extracted-package tests, and real Pi 0.99.2/1.0.0 host smoke checks covering rendering, export, review, autosave, and cleanup.
+
 ## 1.0.15 - 2026-10-02
 
 ### Changed

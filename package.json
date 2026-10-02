@@ -1,6 +1,6 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
@@ -29,6 +29,8 @@
     "assets/modes-overview.svg",
     "index.ts",
     "export.ts",
+    "autosave.ts",
+    "review.ts",
     "internal-patch.ts",
     "parse.ts",
     "persistence.ts",
@@ -38,7 +40,10 @@
     "tsconfig.json",
     "test/thinking-steps.test.ts",
     "test/export.test.ts",
-    "test/summarizer-challenger.test.ts"
+    "test/review-autosave.test.ts",
+    "test/summarizer-challenger.test.ts",
+    "scripts/test-package.mjs",
+    "scripts/test-host.mjs"
   ],
   "pi": {
     "extensions": [
@@ -47,7 +52,9 @@
   },
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "npm run build && node --import tsx test/thinking-steps.test.ts && node --import tsx test/summarizer-challenger.test.ts"
+    "test": "npm run build && node --import tsx test/thinking-steps.test.ts && node --import tsx test/summarizer-challenger.test.ts",
+    "test:package": "node scripts/test-package.mjs",
+    "test:host": "node scripts/test-host.mjs"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -1,6 +1,26 @@
 export type ThinkingStepsMode = "collapsed" | "summary" | "expanded";
 export type PersistedThinkingStepsPreferenceScope = "project" | "global";
 
+export interface ThinkingReviewGroup {
+	prompt?: ThinkingExportNode;
+	responses: ThinkingExportNode[];
+}
+
+export type ThinkingExportScope = "current-branch" | "all-recorded-branches";
+export type ThinkingExportContent = "conversation" | "thinking-only";
+
+export interface ThinkingExportOptions {
+	scope?: ThinkingExportScope;
+	content?: ThinkingExportContent;
+}
+
+export interface ThinkingAutosaveSettings {
+	format: ThinkingExportFormat;
+	scope: ThinkingExportScope;
+	keep: number;
+	content: ThinkingExportContent;
+}
+
 export type ThinkingSemanticRole =
 	| "inspect"
 	| "plan"
@@ -78,7 +98,8 @@ export interface ThinkingExportSnapshot {
 	sessionId: string;
 	leafId: string | null;
 	exportedAt: string;
-	scope: "all-recorded-branches";
+	scope: ThinkingExportScope;
+	content?: ThinkingExportContent;
 	nodes: ThinkingExportNode[];
 }
 
@@ -87,6 +108,9 @@ export interface ThinkingExportAttachment {
 	sessionId: string;
 	leafId: string | null;
 	exportedAt: string;
+	scope?: ThinkingExportScope;
+	content?: ThinkingExportContent;
+	automatic?: boolean;
 	files: Array<{ format: "json" | "markdown"; path: string }>;
 }
 

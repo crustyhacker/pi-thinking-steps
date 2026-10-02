@@ -1,0 +1,35 @@
+name: Compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        node: ["22.19.0", "24"]
+        pi: ["0.99.2", "1.0.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node --import tsx test/repository.test.ts
+      - run: npm run test:package
+      - name: Install isolated compatibility host
+        run: npm install --prefix "$RUNNER_TEMP/pi-host" --ignore-scripts --no-audit --no-fund "@earendil-works/pi-coding-agent@${{ matrix.pi }}"
+      - name: Exercise real host extension loader
+        run: npm run test:host
+        env:
+          PI_TEST_HOST_PACKAGE: ${{ runner.temp }}/pi-host/node_modules/@earendil-works/pi-coding-agent

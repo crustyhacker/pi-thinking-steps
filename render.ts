@@ -11,7 +11,11 @@ export function renderThinkingExportFiles(data: unknown, theme: ThinkingThemeLik
 	if (!data || typeof data !== "object") return invalid();
 	const candidate = data as Partial<ThinkingExportAttachment>;
 	if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.files) || candidate.files.length < 1 || candidate.files.length > 2) return invalid();
-	const lines = [theme.fg("accent", "Thinking review · saved snapshot · all recorded branches")];
+	if (candidate.scope !== undefined && candidate.scope !== "current-branch" && candidate.scope !== "all-recorded-branches") return invalid();
+	if (candidate.content !== undefined && candidate.content !== "thinking-only" && candidate.content !== "conversation") return invalid();
+	if (candidate.automatic !== undefined && typeof candidate.automatic !== "boolean") return invalid();
+	const scope = candidate.scope === "current-branch" ? "current branch" : "all recorded branches";
+	const lines = [theme.fg("accent", `Thinking review · ${candidate.automatic ? "automatic snapshot (subject to retention)" : "saved snapshot"} · ${scope}${candidate.content === "thinking-only" ? " · thinking only" : ""}`)];
 	for (const file of candidate.files) {
 		if (!file || (file.format !== "json" && file.format !== "markdown") || typeof file.path !== "string" || !isAbsolute(file.path)) return invalid();
 		const url = pathToFileURL(file.path).href;

@@ -5,15 +5,43 @@ import { retainThinkingStepsPatch } from "./internal-patch.js";
 import { clearThinkingStepsModePreference, readThinkingStepsModePreference, writeThinkingStepsModePreference } from "./persistence.js";
 import { parseThinkingMode } from "./parse.js";
 import { clearActiveThinkingState, clearThinkingMessageOwnership, getCurrentThinkingScopeKey, getThinkingStepsMode, nextThinkingRefreshLabel, recordThinkingMessageScope, registerThinkingPatchRelease, resolveThinkingMessageScope, setActiveThinkingState, setCurrentThinkingScopeKey, setThinkingStepsMode, takeThinkingPatchRelease } from "./state.js";
-import type { PersistedThinkingStepsPreferenceScope, ThinkingExportFormat, ThinkingStepsMode } from "./types.js";
+import type { PersistedThinkingStepsPreferenceScope, ThinkingAutosaveSettings, ThinkingExportFormat, ThinkingExportScope, ThinkingStepsMode } from "./types.js";
+import { parseThinkingAutosaveSettings, readThinkingAutosaveSettings, runThinkingAutosave, THINKING_AUTOSAVE_ENTRY } from "./autosave.js";
+import { openThinkingReview } from "./review.js";
 import { buildThinkingExport, saveThinkingExport } from "./export.js";
 import { renderThinkingExportFiles } from "./render.js";
+
+async function configureThinkingAutosave(pi: ExtensionAPI, ctx: ExtensionContext, action: "status" | "off" | "on", settings?: ThinkingAutosaveSettings): Promise<boolean> {
+	const manager = ctx.sessionManager;
+	const sessionId = manager.getSessionId();
+	if (action === "status") {
+		const current = readThinkingAutosaveSettings(manager.getEntries(), sessionId);
+		notifyUser(ctx, current ? `Thinking autosave: on · ${current.format} · ${current.scope} · keep ${current.keep} · ${current.content} (this session, TUI only)` : "Thinking autosave: off (default).", "info");
+		return false;
+	}
+	if (!ctx.isIdle()) throw new Error("Wait for the current response to finish before changing autosave settings.");
+	const sessionFile = manager.getSessionFile();
+	if (!sessionFile) throw new Error("Thinking autosave requires a persistent session.");
+	if (action === "on") {
+		if (!settings) throw new Error("Missing thinking autosave settings.");
+		if (ctx.mode !== "tui" || !ctx.hasUI) throw new Error("Enable autosave from Pi's interactive terminal to confirm local storage and retention.");
+		const leafId = manager.getLeafId();
+		const confirmed = await ctx.ui.confirm("Enable thinking autosave for this session?", `${settings.format} · ${settings.scope} · ${settings.content} · retain ${settings.keep} automatic snapshots.\nSensitive provider-supplied thinking will be written beside the session file after completed agent runs. Thinking may quote prompts or responses even in thinking-only mode. Old automatic snapshots are deleted; manual exports are never pruned. Nothing is uploaded. New/forked sessions start off.`);
+		if (!confirmed) return false;
+		if (!ctx.isIdle() || manager.getSessionId() !== sessionId || manager.getSessionFile() !== sessionFile || manager.getLeafId() !== leafId) throw new Error("Session changed while confirming autosave; settings were not saved.");
+	}
+	pi.appendEntry(THINKING_AUTOSAVE_ENTRY, { schemaVersion: 1, sessionId, settings: action === "off" ? null : settings });
+	notifyUser(ctx, action === "off" ? "Thinking autosave: off. Existing export files were kept." : "Thinking autosave enabled for this session; exports begin after the next completed agent run.", "info");
+	return true;
+}
 
 type ThinkingStepsCommandScope = "session" | PersistedThinkingStepsPreferenceScope;
 type ThinkingStepsCommandAction =
 	| { type: "set"; scope: ThinkingStepsCommandScope; mode?: ThinkingStepsMode }
 	| { type: "clear"; scope: PersistedThinkingStepsPreferenceScope }
-	| { type: "export"; format: ThinkingExportFormat };
+	| { type: "export"; format: ThinkingExportFormat; exportScope: ThinkingExportScope }
+	| { type: "review"; exportScope: ThinkingExportScope }
+	| { type: "autosave"; action: "status" | "off" | "on"; settings?: ThinkingAutosaveSettings };
 
 const CUSTOM_ENTRY_TYPE = "thinking-steps.mode";
 const DEFAULT_HIDDEN_LABEL = "Thinking...";
@@ -33,7 +61,7 @@ function modeChangeMessage(mode: ThinkingStepsMode, scope: ThinkingStepsCommandS
 }
 
 function invalidUsageMessage(): string {
-	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both]";
+	return "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation]";
 }
 
 function notifyUser(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
@@ -124,31 +152,34 @@ function isClearCommand(input: string): boolean {
 
 function parseCommandAction(args: string): ThinkingStepsCommandAction | undefined {
 	const trimmed = args.trim();
-	if (!trimmed) {
-		return { type: "set", scope: "session" };
-	}
-
+	if (!trimmed) return { type: "set", scope: "session" };
 	const parts = trimmed.toLowerCase().split(/\s+/);
 	if (parts[0] === "export") {
 		const format = parts[1];
-		return parts.length === 2 && (format === "json" || format === "markdown" || format === "both")
-			? { type: "export", format } : undefined;
+		const scope = parts[2] ?? "all";
+		return parts.length >= 2 && parts.length <= 3 && (format === "json" || format === "markdown" || format === "both") && (scope === "branch" || scope === "all")
+			? { type: "export", format, exportScope: scope === "branch" ? "current-branch" : "all-recorded-branches" } : undefined;
 	}
-	const scope = parsePreferenceScope(trimmed.split(/\s+/, 1)[0] ?? "");
+	if (parts[0] === "review") {
+		const scope = parts[1] ?? "branch";
+		return parts.length <= 2 && (scope === "branch" || scope === "all")
+			? { type: "review", exportScope: scope === "branch" ? "current-branch" : "all-recorded-branches" } : undefined;
+	}
+	if (parts[0] === "autosave") {
+		const action = parts[1] ?? "status";
+		if ((action === "status" || action === "off") && parts.length <= 2) return { type: "autosave", action };
+		if (action !== "on") return undefined;
+		const settings = parseThinkingAutosaveSettings(parts.slice(2));
+		return settings ? { type: "autosave", action, settings } : undefined;
+	}
+	const scope = parsePreferenceScope(parts[0] ?? "");
 	if (!scope) {
 		const mode = parseThinkingMode(trimmed);
 		return mode ? { type: "set", scope: "session", mode } : undefined;
 	}
-
 	const tail = trimmed.replace(/^\S+\s*/, "");
-	if (!tail) {
-		return { type: "set", scope };
-	}
-
-	if (isClearCommand(tail)) {
-		return { type: "clear", scope };
-	}
-
+	if (!tail) return { type: "set", scope };
+	if (isClearCommand(tail)) return { type: "clear", scope };
 	const mode = parseThinkingMode(tail);
 	return mode ? { type: "set", scope, mode } : undefined;
 }
@@ -162,34 +193,28 @@ function buildCompletionItems(values: string[], prefix: string, prefixText = "")
 }
 
 function thinkingModeCompletions(prefix: string): AutocompleteItem[] | null {
-	const trimmed = prefix.trim();
-	const endsWithWhitespace = /\s$/.test(prefix);
-
-	if (!trimmed) {
-		return [
-			...MODE_OPTIONS.map((value) => ({ value, label: value })),
-			...SCOPE_OPTIONS.map((value) => ({ value, label: value })),
-			{ value: "export", label: "export" },
-		];
-	}
-
-	const parts = trimmed.split(/\s+/);
-	if (parts.length === 1 && !endsWithWhitespace) {
-		return buildCompletionItems([...MODE_OPTIONS, ...SCOPE_OPTIONS, "export"], parts[0] ?? "");
-	}
-
-	if (parts[0]?.toLowerCase() === "export") {
-		if (parts.length > 2 || (endsWithWhitespace && parts.length > 1)) return null;
-		return buildCompletionItems(["json", "markdown", "both"], endsWithWhitespace ? "" : parts[1] ?? "", "export ");
-	}
-	const scope = parsePreferenceScope(parts[0] ?? "");
-	if (!scope) {
+	const parts = prefix.trimStart().toLowerCase().split(/\s+/);
+	const root = [...MODE_OPTIONS, ...SCOPE_OPTIONS, "export", "review", "autosave"];
+	if (parts.length === 1) return buildCompletionItems(root, parts[0] ?? "");
+	const head = parts[0];
+	const tail = parts.at(-1) ?? "";
+	const before = `${parts.slice(0, -1).join(" ")} `;
+	if (head === "export") {
+		if (parts.length === 2) return buildCompletionItems(["json", "markdown", "both"], tail, before);
+		if (parts.length === 3 && ["json", "markdown", "both"].includes(parts[1]!)) return buildCompletionItems(["branch", "all"], tail, before);
 		return null;
 	}
-
-	const valuePrefix = `${scope} `;
-	const nestedPrefix = endsWithWhitespace ? "" : parts.slice(1).join(" " );
-	return buildCompletionItems([...MODE_OPTIONS, "clear"], nestedPrefix, valuePrefix);
+	if (head === "review") return parts.length === 2 ? buildCompletionItems(["branch", "all"], tail, before) : null;
+	if (head === "autosave") {
+		if (parts.length === 2) return buildCompletionItems(["on", "off", "status"], tail, before);
+		if (parts[1] !== "on") return null;
+		const options = [["json", "markdown", "both"], ["branch", "all"], ["1", "5", "10", "20", "50"], ["thinking", "conversation"]];
+		if (parts.length > 6 || !parseThinkingAutosaveSettings(parts.slice(2, -1))) return null;
+		return buildCompletionItems(options[parts.length - 3]!, tail, before);
+	}
+	const scope = parsePreferenceScope(head ?? "");
+	if (!scope) return null;
+	return buildCompletionItems([...MODE_OPTIONS, "clear"], parts.slice(1).join(" "), `${scope} `);
 }
 
 async function selectMode(ctx: ExtensionContext): Promise<ThinkingStepsMode | undefined> {
@@ -209,7 +234,7 @@ function reportPatchError(ctx: ExtensionContext, error: unknown): void {
 	notifyUser(ctx, `Thinking steps patch error: ${error instanceof Error ? error.message : String(error)}`, "warning");
 }
 
-async function exportThinkingSteps(pi: ExtensionAPI, ctx: ExtensionContext, format: ThinkingExportFormat): Promise<void> {
+async function exportThinkingSteps(pi: ExtensionAPI, ctx: ExtensionContext, format: ThinkingExportFormat, scope: ThinkingExportScope): Promise<void> {
 	if (!ctx.isIdle()) {
 		notifyUser(ctx, "Wait for the current response to finish before exporting thinking steps.", "warning");
 		return;
@@ -221,7 +246,7 @@ async function exportThinkingSteps(pi: ExtensionAPI, ctx: ExtensionContext, form
 		return;
 	}
 	try {
-		const snapshot = buildThinkingExport(manager.getEntries(), manager.getSessionId(), manager.getLeafId());
+		const snapshot = buildThinkingExport(manager.getEntries(), manager.getSessionId(), manager.getLeafId(), undefined, { scope });
 		const attachment = await saveThinkingExport(snapshot, sessionFile, format);
 		const paths = attachment.files.map((file) => file.path).join("\n");
 		if (manager.getSessionId() !== snapshot.sessionId || manager.getSessionFile() !== sessionFile || manager.getLeafId() !== snapshot.leafId || !ctx.isIdle()) {
@@ -234,7 +259,7 @@ async function exportThinkingSteps(pi: ExtensionAPI, ctx: ExtensionContext, form
 			notifyUser(ctx, `Thinking export saved, but attaching it failed: ${error instanceof Error ? error.message : String(error)}\nFiles:\n${paths}`, "warning");
 			return;
 		}
-		notifyUser(ctx, `Saved thinking review (all recorded branches):\n${paths}`, "info");
+		notifyUser(ctx, `Saved thinking review (${scope === "current-branch" ? "current branch" : "all recorded branches"}):\n${paths}`, "info");
 	} catch (error) {
 		notifyUser(ctx, `Thinking export failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
 	}
@@ -244,6 +269,8 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer("thinking-steps.export", (entry, _options, theme) => renderThinkingExportFiles(entry.data, theme));
 	let sessionScopeKey = getCurrentThinkingScopeKey();
 	const degradedSessionScopes = new Set<string>();
+	let autosaveEpoch = 0;
+	let autosaveRunning = false;
 	const setSessionScopeKey = (scopeKey: string): string => {
 		sessionScopeKey = scopeKey;
 		setCurrentThinkingScopeKey(scopeKey);
@@ -261,7 +288,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	const futureCompatibleSessionMessage = (scope: PersistedThinkingStepsPreferenceScope, action: "saved" | "cleared"): string => `${action === "saved" ? "Saved" : "Cleared"} ${scope} thinking view default for future compatible sessions; the current session is using Pi's native thinking renderer.`;
 
 	pi.registerCommand("thinking-steps", {
-		description: "Switch thinking view, set/clear defaults, or export a session thinking tree",
+		description: "Switch thinking view, review prompts/responses, export, or configure session autosave",
 		getArgumentCompletions: thinkingModeCompletions,
 		handler: async (args, ctx) => {
 			const action = parseCommandAction(args);
@@ -271,7 +298,17 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 			}
 
 			if (action.type === "export") {
-				await exportThinkingSteps(pi, ctx, action.format);
+				await exportThinkingSteps(pi, ctx, action.format, action.exportScope);
+				return;
+			}
+			if (action.type === "review") {
+				try { await openThinkingReview(ctx, action.exportScope); }
+				catch (error) { notifyUser(ctx, `Thinking review failed: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+				return;
+			}
+			if (action.type === "autosave") {
+				try { if (await configureThinkingAutosave(pi, ctx, action.action, action.settings)) autosaveEpoch += 1; }
+				catch (error) { notifyUser(ctx, `Thinking autosave settings failed: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
 				return;
 			}
 			const degraded = isSessionDegraded(ctx.cwd);
@@ -333,6 +370,7 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		autosaveEpoch += 1;
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
 		if (ctx.mode === "tui") {
@@ -400,11 +438,18 @@ export default function thinkingStepsExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("agent_end", async () => {
+	pi.on("agent_end", async (_event, ctx) => {
 		clearActiveThinkingState(undefined, sessionScopeKey);
+		if (ctx.mode !== "tui" || !ctx.hasUI || autosaveRunning) return;
+		const epoch = autosaveEpoch;
+		autosaveRunning = true;
+		try { await runThinkingAutosave(pi, ctx, () => autosaveEpoch === epoch); }
+		catch (error) { notifyUser(ctx, `Thinking autosave failed: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+		finally { autosaveRunning = false; }
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		autosaveEpoch += 1;
 		const activeScopeKey = setSessionScopeKey(ctx.cwd);
 		clearActiveThinkingState(undefined, activeScopeKey);
 		clearThinkingMessageOwnership(activeScopeKey);

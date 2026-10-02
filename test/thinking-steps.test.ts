@@ -1,4 +1,5 @@
 import "./export.test.js";
+import "./review-autosave.test.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -910,7 +911,7 @@ describe("thinkingStepsExtension", () => {
 
 		const command = pi.commands.get("thinking-steps");
 		assert.ok(command);
-		assert.equal(command.description, "Switch thinking view, set/clear defaults, or export a session thinking tree");
+		assert.equal(command.description, "Switch thinking view, review prompts/responses, export, or configure session autosave");
 		assert.deepEqual(command.getArgumentCompletions?.("s"), [{ value: "summary", label: "summary" }]);
 		assert.equal(command.getArgumentCompletions?.("z") ?? null, null);
 
@@ -1124,7 +1125,7 @@ describe("thinkingStepsExtension", () => {
 			assert.deepEqual(getActiveThinkingState(), { active: false });
 
 			setActiveThinkingState({ active: true, messageTimestamp: 701, contentIndex: 3 });
-			await agentEnd();
+			await agentEnd({}, ctx);
 			assert.deepEqual(getActiveThinkingState(), { active: false });
 
 			setActiveThinkingState({ active: true, messageTimestamp: 702, contentIndex: 4 });
@@ -2090,7 +2091,7 @@ describe("thinkingStepsExtension failure paths", () => {
 
 		await command.handler("project unknown-mode", ctx);
 		assert.deepEqual(ctx.ui.notifications.at(-1), {
-			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both]",
+			message: "Usage: /thinking-steps [collapsed|summary|expanded] | [project|global] [collapsed|summary|expanded|clear] | export [json|markdown|both] [branch|all] | review [branch|all] | autosave [status|off] | autosave on [json|markdown|both] [branch|all] [keep:1-50] [thinking|conversation]",
 			level: "warning",
 		});
 		assert.equal(pi.appendedEntries.length, 0);
@@ -3097,38 +3098,21 @@ describe("current Pi compatibility", () => {
 });
 
 
-describe("repo metadata contracts", () => {
-	it("keeps published files, pinned Pi dependencies, docs, and archived prompts aligned", async () => {
+describe("published package contracts", () => {
+	it("ships self-contained validation, pinned Pi development dependencies, and matching public docs", async () => {
 		const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
-			version: string;
-			main: string;
-			files: string[];
-			pi?: { extensions?: string[] };
-			scripts: Record<string, string>;
-			license: string;
-			dependencies?: Record<string, string>;
-			peerDependencies: Record<string, string>;
-			devDependencies: Record<string, string>;
-			engines: { node: string };
+			version: string; main: string; files: string[]; pi?: { extensions?: string[] };
+			scripts: Record<string, string>; license: string; dependencies?: Record<string, string>;
+			peerDependencies: Record<string, string>; devDependencies: Record<string, string>; engines: { node: string };
 		};
-		const packageLock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
-			version: string;
-			packages?: Record<string, { version?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>;
-		};
-		for (const file of packageJson.files) {
-			await assert.doesNotReject(readFile(file, "utf8"));
+		for (const file of packageJson.files) await assert.doesNotReject(readFile(file, "utf8"));
+		for (const file of ["tsconfig.json", "test/thinking-steps.test.ts", "test/export.test.ts", "test/summarizer-challenger.test.ts"]) {
+			assert.ok(packageJson.files.includes(file));
 		}
-		assert.ok(packageJson.files.includes("tsconfig.json"));
-		assert.ok(packageJson.files.includes("test/thinking-steps.test.ts"));
-		assert.ok(packageJson.files.includes("test/summarizer-challenger.test.ts"));
-		assert.equal(packageJson.version, packageLock.version);
-		assert.equal(packageJson.version, packageLock.packages?.[""]?.version);
 		assert.equal(packageJson.main, "index.ts");
 		assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 		assert.ok(packageJson.files.includes(packageJson.main));
-		for (const extension of packageJson.pi?.extensions ?? []) {
-			assert.ok(packageJson.files.includes(extension.replace(/^\.\//, "")));
-		}
+		for (const extension of packageJson.pi?.extensions ?? []) assert.ok(packageJson.files.includes(extension.replace(/^\.\//, "")));
 		assert.equal(packageJson.scripts.build, "tsc --noEmit");
 		assert.match(packageJson.scripts.test, /^npm run build && /);
 		assert.match(packageJson.scripts.test, /node --import tsx test\/thinking-steps\.test\.ts/);
@@ -3136,74 +3120,20 @@ describe("repo metadata contracts", () => {
 		assert.ok(packageJson.scripts.test.indexOf("test/thinking-steps.test.ts") < packageJson.scripts.test.indexOf("test/summarizer-challenger.test.ts"));
 		assert.equal(packageJson.license, "MIT");
 		assert.equal(packageJson.dependencies, undefined);
-		for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-			assert.equal(packageJson.peerDependencies[packageName], "*");
-			assert.equal(packageJson.devDependencies[packageName], "0.99.2");
-			assert.equal(packageLock.packages?.[`node_modules/${packageName}`]?.version, "0.99.2");
+		for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+			assert.equal(packageJson.peerDependencies[name], "*");
+			assert.equal(packageJson.devDependencies[name], "0.99.2");
 		}
-		assert.deepEqual(packageLock.packages?.[""]?.peerDependencies, packageJson.peerDependencies);
-		assert.deepEqual(packageLock.packages?.[""]?.devDependencies, packageJson.devDependencies);
 		assert.equal(packageJson.engines.node, ">=22.19.0");
 		assert.ok(!Object.values(packageJson.devDependencies).includes("latest"));
-
-		const license = await readFile("LICENSE", "utf8");
-		assert.ok(license.includes("MIT License"));
-
+		assert.match(await readFile("LICENSE", "utf8"), /MIT License/);
 		const readme = await readFile("README.md", "utf8");
-		assert.ok(readme.includes("[MIT License](./LICENSE)"));
-		assert.ok(readme.includes("badge/license-MIT"));
-		assert.ok(readme.includes(`releases/tag/v${packageJson.version}`));
-		assert.ok(readme.includes(`release-v${packageJson.version}`));
-		assert.ok(readme.includes("retained patch releases are scope-owned"));
-		assert.ok(readme.includes("assistant message ownership is recorded"));
-		assert.ok(readme.includes("`tsconfig.json`"));
-		assert.ok(readme.includes("published validation tests under `test/`"));
-
-		const agents = await readFile("AGENTS.md", "utf8");
-		assert.ok(agents.includes("project clear"));
-		assert.ok(agents.includes("global clear"));
-		assert.ok(agents.includes("session -> project -> global -> summary"));
-		assert.match(agents, new RegExp(`## Current Version\\s+${packageJson.version.replaceAll(".", "\\.")}`));
-		assert.ok(agents.includes("plan.md"));
-		assert.ok(agents.includes("progress.md"));
-		assert.ok(agents.includes("`CHANGELOG.md` is tracked"));
-		assert.ok(!agents.includes("currently has **no `CHANGELOG.md`"));
-		assert.ok(!agents.includes("summarization-algorithm.md"));
-
-		const progress = await readFile("progress.md", "utf8");
-		assert.ok(progress.includes("Non-authoritative placeholder"));
-		assert.ok(progress.includes("Larra sessions"));
-
-		const plan = await readFile("plan.md", "utf8");
-		assert.ok(plan.includes("Historical/non-authoritative placeholder"));
-		assert.ok(plan.includes("completed in `v1.0.10`"));
-		assert.ok(plan.includes("CHANGELOG.md"));
-
-		const leftoverPrompt = await readFile("prompts/fix-leftover-issues_v1-0-0.md", "utf8");
-		assert.ok(leftoverPrompt.includes("planning/"));
-		assert.ok(!leftoverPrompt.includes("plannig/"));
-
+		for (const text of ["[MIT License](./LICENSE)", "badge/license-MIT", `releases/tag/v${packageJson.version}`, `release-v${packageJson.version}`, "retained patch releases are scope-owned", "assistant message ownership is recorded", "`tsconfig.json`", "published validation tests under `test/`"]) assert.ok(readme.includes(text), text);
 		const typesSource = await readFile("types.ts", "utf8");
 		assert.ok(typesSource.includes("export type PersistedThinkingStepsPreferenceScope"));
 		const persistenceSource = await readFile("persistence.ts", "utf8");
 		assert.ok(!persistenceSource.includes("export type PersistedThinkingStepsPreferenceScope"));
-		assert.ok(persistenceSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingStepsMode } from \"./types.js\""));
-		const indexSource = await readFile("index.ts", "utf8");
-		assert.ok(indexSource.includes("import type { PersistedThinkingStepsPreferenceScope, ThinkingExportFormat, ThinkingStepsMode } from \"./types.js\""));
-
-		const archivedContinuePrompt = await readFile("prompts/continue-2026-04-16.md", "utf8");
-		assert.ok(archivedContinuePrompt.includes("Historical continuation prompt") || archivedContinuePrompt.includes("Archived continue prompt"));
-		assert.ok(archivedContinuePrompt.includes("do **not** treat any git/tag/push/clean-tree statements below as current repo truth"));
-
-		const auditPromptV2 = await readFile("prompts/audit/generalized-deep-audit_v2-0-0.md", "utf8");
-		assert.ok(auditPromptV2.includes("Canonical generalized audit prompt"));
-		assert.ok(auditPromptV2.includes("CHANGELOG.md"));
-		assert.ok(auditPromptV2.includes("plan.md"));
-		assert.ok(auditPromptV2.includes("progress.md"));
-		assert.ok(!auditPromptV2.includes("summarization-algorithm.md"));
-
-		const auditPromptV1 = await readFile("prompts/audit/full-codebase-audit-v1.0.0.md", "utf8");
-		assert.ok(auditPromptV1.includes("Superseded / historical prompt"));
-		assert.ok(auditPromptV1.includes("generalized-deep-audit_v2-0-0.md"));
+		assert.match(persistenceSource, /import type \{[^}]*PersistedThinkingStepsPreferenceScope[^}]*\} from "\.\/types\.js"/);
+		assert.match(await readFile("index.ts", "utf8"), /import type \{[^}]*PersistedThinkingStepsPreferenceScope[^}]*\} from "\.\/types\.js"/);
 	});
 });
