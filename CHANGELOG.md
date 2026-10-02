@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.15 - 2026-10-02
+
+### Changed
+
+- Updated README and package repository, homepage, and issue links to the canonical `crustyhacker/pi-thinking-steps` repository.
+- Added an npm badge and installation quick start, with prominent always-visible panel and session-export highlights.
+- Clarified how to begin using the published package and where to find export privacy guidance and release notes. No runtime behavior or dependency changes.
+
 ## 1.0.14 - 2026-10-01
 
 ### Added

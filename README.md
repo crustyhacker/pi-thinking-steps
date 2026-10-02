@@ -9,7 +9,8 @@
   Turn raw provider reasoning into a clean, structured TUI view without changing what it means.
 </p>
 <p align="center">
-  <a href="https://github.com/fluxgear/pi-thinking-steps/releases/tag/v1.0.14"><img alt="release" src="https://img.shields.io/badge/release-v1.0.14-4f46e5" /></a>
+  <a href="https://github.com/crustyhacker/pi-thinking-steps/releases/tag/v1.0.15"><img alt="release" src="https://img.shields.io/badge/release-v1.0.15-4f46e5" /></a>
+  <a href="https://www.npmjs.com/package/pi-thinking-steps"><img alt="npm version" src="https://img.shields.io/npm/v/pi-thinking-steps" /></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-16a34a" /></a>
   <img alt="typescript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
   <img alt="ui" src="https://img.shields.io/badge/UI-terminal--native-f59e0b" />
@@ -41,6 +42,8 @@ The goal is simple: **preserve meaning, improve readability, and stay native to 
 ## What you get
 
 - **Three focused modes** — `collapsed`, `summary`, `expanded`
+- **Always-visible thinking panels** — honest waiting or missing-content indicators when the provider supplies no thinking text
+- **Session-linked review files** — manually export prompts and available thinking as a branching tree in JSON, Markdown, or both
 - **Terminal-first rendering** — width-aware, ANSI-safe, and live-update friendly
 - **Faithful parsing** — deterministic step derivation and restrained summarization
 - **Markdown-aware output** — headings, bullets, ordered lists, code spans, and emphasis render cleanly
@@ -228,6 +231,20 @@ Pi packages are host-provided peer dependencies, with exact `0.99.2` development
 ---
 
 ## Quick start
+
+### Install from npm
+
+With Pi installed, add the published extension:
+
+```bash
+pi install npm:pi-thinking-steps
+```
+
+Restart Pi, then use `Alt+T` to cycle views or `/thinking-steps` to choose one. After a response finishes, run `/thinking-steps export both` to save a session-linked review. Exports include all recorded branches and may contain sensitive conversation data; see [Manual session exports](#manual-session-exports).
+
+Find the package on [npm](https://www.npmjs.com/package/pi-thinking-steps) and release notes on [GitHub](https://github.com/crustyhacker/pi-thinking-steps/releases).
+
+### Try a local checkout
 
 From the repository root, using Pi `0.99.2` or `1.0.0`:
 

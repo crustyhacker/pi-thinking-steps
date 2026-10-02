@@ -1,17 +1,17 @@
 {
   "name": "pi-thinking-steps",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Professional three-mode thinking-step rendering for Pi's TUI.",
   "license": "MIT",
   "type": "module",
   "main": "index.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fluxgear/pi-thinking-steps.git"
+    "url": "git+https://github.com/crustyhacker/pi-thinking-steps.git"
   },
-  "homepage": "https://github.com/fluxgear/pi-thinking-steps#readme",
+  "homepage": "https://github.com/crustyhacker/pi-thinking-steps#readme",
   "bugs": {
-    "url": "https://github.com/fluxgear/pi-thinking-steps/issues"
+    "url": "https://github.com/crustyhacker/pi-thinking-steps/issues"
   },
   "keywords": [
     "pi",
